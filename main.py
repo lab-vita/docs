@@ -187,7 +187,10 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
     """
     Заменяет картинку-заглушку на реальное изображение подписи.
     Поиск по полю "Описание" замещающего текста (Alt Text).
+    Создаёт новый независимый part чтобы разные подписи не шарили один файл.
     """
+    from docx.opc.part import Part
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
     def process_paragraphs(paragraphs):
         for p in paragraphs:
@@ -205,10 +208,20 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
                     blip = drawing.find('.//' + qn('a:blip'))
                     if blip is None:
                         continue
-                    r_embed = blip.get(qn('r:embed'))
-                    img_part = doc.part.related_parts[r_embed]
-                    img_part._blob = image_bytes
-                    logger.info(f"Заменена картинка: {placeholder_desc}")
+
+                    # Создаём новый независимый part для изображения
+                    image_part = Part(
+                        partname=f"/word/media/sign_{placeholder_desc}.png",
+                        content_type="image/png",
+                        blob=image_bytes,
+                        package=doc.part.package
+                    )
+                    new_rId = doc.part.relate_to(
+                        image_part,
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+                    )
+                    blip.set(qn('r:embed'), new_rId)
+                    logger.info(f"Заменена картинка: {placeholder_desc} -> {new_rId}")
                     return True
         return False
 
@@ -392,22 +405,27 @@ async def activity_handler(request: Request):
         except Exception:
             data = {}
 
-    logger.info(f"Распарсенные данные: {dict(list(data.items())[:5])}")
+    logger.info(f"Все данные формы: {dict(data)}")
 
-    # Извлекаем props из form-encoded формата properties[key]
+    # Извлекаем props из form-encoded формата properties[key] и properties[key][N]
     props = {}
     for key, value in data.items():
-        if key.startswith("properties[") and key.endswith("]"):
-            prop_key = key[11:-1]
-            # Множественные поля приходят с суффиксом [0], [1] и т.д.
-            if "[" in prop_key:
-                base_key = prop_key[:prop_key.index("[")]
-                if base_key not in props:
-                    props[base_key] = []
-                if isinstance(props[base_key], list):
-                    props[base_key].append(value)
-            else:
-                props[prop_key] = value
+        if not key.startswith("properties["):
+            continue
+        # Убираем префикс "properties["
+        rest = key[11:]
+        # Формат: properties[key] или properties[key][N]
+        if "][" in rest:
+            # Множественное поле: properties[variables][0] -> variables
+            base_key = rest[:rest.index("][")]
+            if base_key not in props:
+                props[base_key] = []
+            if isinstance(props[base_key], list):
+                props[base_key].append(value)
+        elif rest.endswith("]"):
+            # Одиночное поле: properties[template_id]
+            prop_key = rest[:-1]
+            props[prop_key] = value
     event_token = data.get("event_token")
     auth = data.get("auth", {})
 
