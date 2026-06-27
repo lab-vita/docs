@@ -116,9 +116,9 @@ def b24_call(method: str, params: dict, use_webhook: bool = False) -> dict:
 
 # === Интеграция с Диском Битрикс24 ===
 
-def b24_download_file(file_id: str) -> bytes:
+def b24_download_file(file_id: str, use_webhook: bool = True) -> bytes:
     """Скачивает файл с Диска Битрикс24 по ID"""
-    result = b24_call("disk.file.get", {"id": file_id}, use_webhook=True)
+    result = b24_call("disk.file.get", {"id": file_id}, use_webhook=use_webhook)
     download_url = result.get("DOWNLOAD_URL")
     if not download_url:
         raise HTTPException(status_code=404, detail=f"Файл {file_id} не найден на Диске")
@@ -395,13 +395,13 @@ async def activity_handler(request: Request):
     logger.info(f"Переменные: {doc_data}")
     logger.info(f"Подписи: {signatures}")
 
-    # Генерируем документ
-    template_bytes = b24_download_file(template_id)
+    # Генерируем документ — используем токен приложения для скачивания
+    template_bytes = b24_download_file(template_id, use_webhook=False)
     doc = Document(io.BytesIO(template_bytes))
     replace_text(doc, doc_data)
 
     for sig in signatures:
-        sign_bytes = b24_download_file(sig["signature_id"])
+        sign_bytes = b24_download_file(sig["signature_id"], use_webhook=False)
         replace_image(doc, sig["placeholder"], sign_bytes)
 
     output = io.BytesIO()
