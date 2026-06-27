@@ -441,7 +441,16 @@ async def activity_handler(request: Request):
     logger.info(f"Переменные: {doc_data}")
     logger.info(f"Подписи: {signatures}")
 
-    # Генерируем документ — используем токен приложения для скачивания
+    # Обновляем токен из данных запроса — он всегда свежий
+    request_access_token = data.get("auth[access_token]")
+    if request_access_token:
+        tokens = load_tokens()
+        tokens["access_token"] = request_access_token
+        tokens["refresh_token"] = data.get("auth[refresh_token]", tokens.get("refresh_token", ""))
+        tokens["client_endpoint"] = data.get("auth[client_endpoint]", tokens.get("client_endpoint", ""))
+        save_tokens(tokens)
+
+    # Генерируем документ
     template_bytes = b24_download_file(template_id, use_webhook=False)
     doc = Document(io.BytesIO(template_bytes))
     replace_text(doc, doc_data)
