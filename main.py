@@ -598,6 +598,18 @@ async def submit(req: SubmitRequest):
             return {"success": False, "error": "Не удалось создать заявку"}
 
         logger.info(f"Создан элемент ID={element_id}")
+
+        # Запускаем бизнес-процесс
+        bp_template_id = os.getenv("CASH_REQUEST_BP_ID", "592")
+        bp_url = f"{client_endpoint}bizproc.workflow.start.json"
+        bp_resp = requests.post(bp_url, params={"auth": access_token}, json={
+            "TEMPLATE_ID": bp_template_id,
+            "DOCUMENT_ID": ["lists", "BizprocDocument", str(element_id)],
+            "PARAMETERS": {}
+        })
+        bp_data = bp_resp.json()
+        logger.info(f"Запуск БП: {bp_data}")
+
         return {"success": True, "element_id": element_id}
 
     except Exception as e:
