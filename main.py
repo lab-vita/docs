@@ -1,17 +1,19 @@
 import os
+import io
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from docx import Document
 from docx.oxml.ns import qn
+from datetime import datetime
 import logging
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Bitrix24 Business Process Document Generator")
+app = FastAPI(title="Document Generator for Bitrix24")
 
 # URL вебхука Битрикс24 берётся из переменной окружения
 BITRIX_WEBHOOK = os.getenv("BITRIX_WEBHOOK_URL")
@@ -132,27 +134,22 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
     def process_paragraphs(paragraphs):
         for p in paragraphs:
             for run in p.runs:
-                # Ищем все inline и anchor изображения в run-е
                 drawings = (
                         run._element.findall('.//' + qn('wp:inline')) +
                         run._element.findall('.//' + qn('wp:anchor'))
                 )
                 for drawing in drawings:
-                    # Получаем docPr — блок с метаданными изображения
                     docPr = drawing.find('.//' + qn('wp:docPr'))
                     if docPr is None:
                         continue
 
-                    # Проверяем совпадение замещающего текста
                     if docPr.get('descr', '') != placeholder_desc:
                         continue
 
-                    # Находим blip — ссылку на файл изображения внутри документа
                     blip = drawing.find('.//' + qn('a:blip'))
                     if blip is None:
                         continue
 
-                    # Получаем relationship ID и заменяем blob
                     r_embed = blip.get(qn('r:embed'))
                     img_part = doc.part.related_parts[r_embed]
                     img_part._blob = image_bytes
@@ -160,10 +157,8 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
                     return True
         return False
 
-    # Ищем в основных параграфах
     process_paragraphs(doc.paragraphs)
 
-    # Ищем в таблицах
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -171,6 +166,56 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
 
 
 # === Эндпоинты ===
+
+@app.post("/generate")
+async def generate_document(req: GenerateRequest):
+    """
+    Генерирует документ из шаблона и загружает на Диск Битрикс24.
+
+    Порядок действий:
+    1. Скачиваем шаблон .docx с Диска Б24
+    2. Заменяем текстовые переменные ${KEY} значениями из data
+    3. Заменяем картинки-заглушки реальными подписями
+    4. Сохраняем документ в буфер
+    5. Загружаем на Диск Б24 с уникальным именем (добавляем временную метку)
+    6. Возвращаем ID и имя загруженного файла
+    """
+    if not BITRIX_WEBHOOK:
+        raise HTTPException(status_code=500, detail="BITRIX_WEBHOOK_URL не настроен")
+
+    logger.info(f"Генерация документа: {req.filename}")
+
+    # Шаг 1: скачиваем шаблон
+    template_bytes = b24_download_file(req.template_id)
+    logger.info("Шаблон скачан")
+
+    # Шаг 2: открываем шаблон и заменяем текстовые переменные
+    doc = Document(io.BytesIO(template_bytes))
+    replace_text(doc, req.data)
+
+    # Шаг 3: заменяем картинки подписей
+    for sig in req.signatures:
+        logger.info(f"Скачиваем подпись ID={sig.signature_id} для {sig.placeholder}")
+        sign_bytes = b24_download_file(sig.signature_id)
+        replace_image(doc, sig.placeholder, sign_bytes)
+
+    # Шаг 4: сохраняем документ в буфер
+    output = io.BytesIO()
+    doc.save(output)
+    output.seek(0)
+
+    # Шаг 5: формируем уникальное имя файла с временной меткой
+    # чтобы избежать ошибки "файл с таким именем уже существует"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name, ext = req.filename.rsplit(".", 1) if "." in req.filename else (req.filename, "docx")
+    unique_filename = f"{name}_{timestamp}.{ext}"
+
+    logger.info(f"Загружаем в папку ID={req.folder_id} как {unique_filename}")
+    file_id = b24_upload_file(req.folder_id, unique_filename, output.read())
+
+    logger.info(f"Готово! ID файла: {file_id}")
+    return {"file_id": file_id, "filename": unique_filename}
+
 
 @app.get("/health")
 async def health():
