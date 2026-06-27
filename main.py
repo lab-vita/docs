@@ -3,6 +3,7 @@ import io
 import json
 import requests
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from docx import Document
@@ -19,9 +20,15 @@ app = FastAPI(title="Document Generator for Bitrix24")
 # Константы приложения из переменных окружения
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-BITRIX_WEBHOOK = os.getenv("BITRIX_WEBHOOK_URL")
+BITRIX_WEBHOOK = os.getenv("BITRIX_WEBHOOK_URL")  # используется только для загрузки файлов на Диск
 APP_URL = os.getenv("APP_URL", "https://docs.lab-vita.ru")
 TOKEN_FILE = "/app/tokens.json"
+
+# ID полей процесса «Выдача наличных» (можно переопределить через .env)
+CASH_REQUEST_IBLOCK_ID = os.getenv("CASH_REQUEST_IBLOCK_ID", "94")
+CASH_REQUEST_BP_ID = os.getenv("CASH_REQUEST_BP_ID", "592")
+FIELD_SUMMA = os.getenv("FIELD_SUMMA", "PROPERTY_516")
+FIELD_NAZNACHENIE = os.getenv("FIELD_NAZNACHENIE", "PROPERTY_518")
 
 
 # === Модели данных ===
@@ -31,12 +38,16 @@ class SignatureEntry(BaseModel):
     signature_id: str  # ID файла подписи на Диске Битрикс24
 
 
-class GenerateRequest(BaseModel):
-    template_id: str
-    folder_id: str
-    filename: str
-    data: dict
-    signatures: Optional[List[SignatureEntry]] = []
+class Position(BaseModel):
+    name: str
+    amount: float
+
+
+class SubmitRequest(BaseModel):
+    title: str
+    positions: List[Position]
+    user_id: str = ""
+    auth_token: str = ""
 
 
 # === Работа с токенами ===
@@ -58,7 +69,7 @@ def load_tokens() -> dict:
 
 
 def refresh_access_token() -> str:
-    """Обновляет access_token через refresh_token"""
+    """Обновляет access_token через refresh_token и возвращает новый"""
     tokens = load_tokens()
     if not tokens.get("refresh_token"):
         raise HTTPException(status_code=401, detail="Нет refresh_token — переустановите приложение")
@@ -77,54 +88,29 @@ def refresh_access_token() -> str:
 
 
 def get_access_token() -> str:
-    """Возвращает актуальный access_token, при необходимости обновляет"""
+    """Возвращает актуальный access_token из файла"""
     tokens = load_tokens()
     if not tokens.get("access_token"):
         return refresh_access_token()
     return tokens["access_token"]
 
 
-# === Вызовы REST API Битрикс24 ===
-
-def b24_call(method: str, params: dict, use_webhook: bool = False) -> dict:
-    """Универсальный вызов REST API Битрикс24"""
-    if use_webhook and BITRIX_WEBHOOK:
-        url = f"{BITRIX_WEBHOOK}{method}.json"
-        resp = requests.post(url, json=params)
-    else:
-        access_token = get_access_token()
-        tokens = load_tokens()
-        # Используем client_endpoint если есть, иначе формируем из domain
-        client_endpoint = tokens.get("client_endpoint", "")
-        domain = tokens.get("domain", "")
-        if client_endpoint:
-            url = f"{client_endpoint}{method}.json"
-        else:
-            url = f"https://{domain}/rest/{method}.json"
-        logger.info(f"B24 call: {url}, auth={access_token[:10]}...")
-        resp = requests.post(url, params={"auth": access_token}, json=params)
-
-    resp.raise_for_status()
-    result = resp.json()
-
-    # Если токен протух — обновляем и повторяем
-    if isinstance(result, dict) and result.get("error") == "expired_token":
-        access_token = refresh_access_token()
-        tokens = load_tokens()
-        domain = tokens.get("domain", "")
-        url = f"https://{domain}/rest/{method}.json"
-        resp = requests.post(url, json={**params, "auth": access_token})
-        resp.raise_for_status()
-        result = resp.json()
-
-    return result.get("result", result)
+def get_client_endpoint() -> str:
+    """Возвращает базовый URL REST API Битрикс24"""
+    tokens = load_tokens()
+    return tokens.get("client_endpoint", "")
 
 
 # === Интеграция с Диском Битрикс24 ===
 
-def b24_download_file(file_id: str, use_webhook: bool = True) -> bytes:
-    """Скачивает файл с Диска Битрикс24 по ID"""
-    result = b24_call("disk.file.get", {"id": file_id}, use_webhook=use_webhook)
+def b24_download_file(file_id: str) -> bytes:
+    """Скачивает файл с Диска Битрикс24 по ID через токен приложения"""
+    access_token = get_access_token()
+    client_endpoint = get_client_endpoint()
+    url = f"{client_endpoint}disk.file.get.json"
+    resp = requests.post(url, params={"auth": access_token}, json={"id": file_id})
+    resp.raise_for_status()
+    result = resp.json().get("result", {})
     download_url = result.get("DOWNLOAD_URL")
     if not download_url:
         raise HTTPException(status_code=404, detail=f"Файл {file_id} не найден на Диске")
@@ -134,7 +120,7 @@ def b24_download_file(file_id: str, use_webhook: bool = True) -> bytes:
 
 
 def b24_upload_file(folder_id: str, filename: str, content: bytes) -> str:
-    """Загружает файл на Диск Битрикс24 и возвращает ID"""
+    """Загружает файл на Диск Битрикс24 через вебхук и возвращает ID"""
     url = f"{BITRIX_WEBHOOK}disk.folder.uploadfile.json"
     resp = requests.post(url, params={"id": folder_id, "data[NAME]": filename})
     resp.raise_for_status()
@@ -209,7 +195,6 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
                     if blip is None:
                         continue
 
-                    # Создаём новый независимый part для изображения
                     image_part = Part(
                         partname=PackURI(f"/word/media/sign_{placeholder_desc}.png"),
                         content_type="image/png",
@@ -235,8 +220,7 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
 def parse_variables(variables_list) -> dict:
     """
     Парсит переменные из формата KEY|VALUE в словарь.
-    Поддерживает строку и список строк.
-    Пример: ["EMPLOYEE_NAME|Егошин Алексей", "AMOUNT|20000"] -> {"EMPLOYEE_NAME": "Егошин Алексей", ...}
+    Пример: ["EMPLOYEE_NAME|Егошин Алексей"] -> {"EMPLOYEE_NAME": "Егошин Алексей"}
     """
     result = {}
     if isinstance(variables_list, str):
@@ -263,9 +247,35 @@ def parse_signatures(signatures_list) -> list:
     return result
 
 
+def generate_document(template_id: str, folder_id: str, filename: str, data: dict, signatures: list) -> str:
+    """
+    Генерирует документ из шаблона и загружает на Диск.
+    Возвращает ID загруженного файла.
+    """
+    template_bytes = b24_download_file(template_id)
+    doc = Document(io.BytesIO(template_bytes))
+    replace_text(doc, data)
+
+    for sig in signatures:
+        sign_bytes = b24_download_file(sig["signature_id"])
+        replace_image(doc, sig["placeholder"], sign_bytes)
+
+    output = io.BytesIO()
+    doc.save(output)
+    output.seek(0)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "docx")
+    unique_filename = f"{name}_{timestamp}.{ext}"
+
+    file_id = b24_upload_file(folder_id, unique_filename, output.read())
+    logger.info(f"Документ сгенерирован, ID: {file_id}, имя: {unique_filename}")
+    return file_id
+
+
 # === Регистрация активити в Битрикс24 ===
 
-def register_activity(domain: str, access_token: str):
+def register_activity(access_token: str):
     """Регистрирует кастомное активити в дизайнере БП"""
     params = {
         "auth": access_token,
@@ -298,14 +308,12 @@ def register_activity(domain: str, access_token: str):
                 "Multiple": "N",
             },
             "variables": {
-                # Множественное поле — пользователь добавляет строки KEY|VALUE
                 "Name": {"ru": "Переменные шаблона (KEY|VALUE)", "en": "Template variables (KEY|VALUE)"},
                 "Type": "string",
                 "Required": "N",
                 "Multiple": "Y",
             },
             "signatures": {
-                # Множественное поле — пользователь добавляет строки PLACEHOLDER|FILE_ID
                 "Name": {"ru": "Подписи (PLACEHOLDER|FILE_ID)", "en": "Signatures (PLACEHOLDER|FILE_ID)"},
                 "Type": "string",
                 "Required": "N",
@@ -322,8 +330,7 @@ def register_activity(domain: str, access_token: str):
         },
     }
 
-    tokens = load_tokens()
-    client_endpoint = tokens.get("client_endpoint") or f"https://{domain}/rest/"
+    client_endpoint = get_client_endpoint()
     url = f"{client_endpoint}bizproc.activity.add.json"
     resp = requests.post(url, json=params)
     resp.raise_for_status()
@@ -340,41 +347,36 @@ async def install(request: Request):
     Вызывается Битрикс24 при установке приложения.
     Сохраняет токены и регистрирует активити в дизайнере БП.
     """
-    # Битрикс24 может передавать параметры как в query string так и в теле POST
     query_params = dict(request.query_params)
     try:
         form_params = dict(await request.form())
     except Exception:
         form_params = {}
 
-    # Объединяем параметры, form имеет приоритет
     params = {**query_params, **form_params}
     logger.info(f"Установка приложения: {params}")
 
     tokens = {
-        "access_token": params.get("AUTH_ID") or params.get("auth_id") or params.get("auth[access_token]"),
-        "refresh_token": params.get("AUTH_REFRESH_ID") or params.get("auth_refresh_id") or params.get(
-            "auth[refresh_token]"),
-        "domain": params.get("DOMAIN") or params.get("domain") or params.get("auth[domain]"),
+        "access_token": params.get("AUTH_ID") or params.get("auth[access_token]"),
+        "refresh_token": params.get("AUTH_REFRESH_ID") or params.get("auth[refresh_token]"),
+        "domain": params.get("DOMAIN") or params.get("auth[domain]"),
         "member_id": params.get("member_id") or params.get("auth[member_id]"),
         "client_endpoint": params.get("auth[client_endpoint]"),
     }
     save_tokens(tokens)
 
     try:
-        register_activity(tokens["domain"], tokens["access_token"])
+        register_activity(tokens["access_token"])
         logger.info("Активити зарегистрировано")
     except Exception as e:
         logger.error(f"Ошибка регистрации активити: {e}")
 
-    return {"status": "ok", "message": "Приложение установлено, активити зарегистрировано"}
+    return {"status": "ok", "message": "Приложение установлено"}
 
 
 @app.post("/app")
 async def app_handler(request: Request):
     """Обработчик событий приложения от Битрикс24"""
-    body = await request.body()
-    logger.info(f"Событие приложения: {body[:200]}")
     return {"status": "ok"}
 
 
@@ -383,16 +385,10 @@ async def activity_handler(request: Request):
     """
     Обработчик активити — вызывается Битрикс24 когда БП
     доходит до действия 'Генерация документа'.
-
-    Получает параметры в формате:
-    - variables: список строк KEY|VALUE (переменные шаблона)
-    - signatures: список строк PLACEHOLDER|FILE_ID (подписи)
-    - template_id, folder_id, filename — обязательные поля
     """
     body = await request.body()
-    logger.info(f"Вызов активити: {body[:500]}")
+    logger.info(f"Вызов активити: {body[:200]}")
 
-    # Битрикс24 шлёт данные как form-encoded
     try:
         form = await request.form()
         data = dict(form)
@@ -405,36 +401,26 @@ async def activity_handler(request: Request):
         except Exception:
             data = {}
 
-    logger.info(f"Все данные формы: {dict(data)}")
-
     # Извлекаем props из form-encoded формата properties[key] и properties[key][N]
     props = {}
     for key, value in data.items():
         if not key.startswith("properties["):
             continue
-        # Убираем префикс "properties["
         rest = key[11:]
-        # Формат: properties[key] или properties[key][N]
         if "][" in rest:
-            # Множественное поле: properties[variables][0] -> variables
             base_key = rest[:rest.index("][")]
             if base_key not in props:
                 props[base_key] = []
             if isinstance(props[base_key], list):
                 props[base_key].append(value)
         elif rest.endswith("]"):
-            # Одиночное поле: properties[template_id]
-            prop_key = rest[:-1]
-            props[prop_key] = value
-    event_token = data.get("event_token")
-    auth = data.get("auth", {})
+            props[rest[:-1]] = value
 
-    # Основные параметры
+    event_token = data.get("event_token")
+
     template_id = props.get("template_id", "")
     folder_id = props.get("folder_id", "")
     filename = props.get("filename", "document.docx")
-
-    # Парсим переменные и подписи из формата KEY|VALUE
     doc_data = parse_variables(props.get("variables", []))
     signatures = parse_signatures(props.get("signatures", []))
 
@@ -450,98 +436,19 @@ async def activity_handler(request: Request):
         tokens["client_endpoint"] = data.get("auth[client_endpoint]", tokens.get("client_endpoint", ""))
         save_tokens(tokens)
 
-    # Генерируем документ
-    template_bytes = b24_download_file(template_id, use_webhook=False)
-    doc = Document(io.BytesIO(template_bytes))
-    replace_text(doc, doc_data)
+    file_id = generate_document(template_id, folder_id, filename, doc_data, signatures)
 
-    for sig in signatures:
-        sign_bytes = b24_download_file(sig["signature_id"], use_webhook=False)
-        replace_image(doc, sig["placeholder"], sign_bytes)
-
-    output = io.BytesIO()
-    doc.save(output)
-    output.seek(0)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "docx")
-    unique_filename = f"{name}_{timestamp}.{ext}"
-
-    file_id = b24_upload_file(folder_id, unique_filename, output.read())
-    logger.info(f"Документ сгенерирован, ID: {file_id}")
-
-    # Возвращаем результат в БП через bizproc.event.send
-    tokens = load_tokens()
-    domain = tokens.get("domain", auth.get("domain", ""))
-    access_token = auth.get("access_token") or get_access_token()
-
-    return_url = f"https://{domain}/rest/bizproc.event.send.json"
-    return_resp = requests.post(return_url, json={
-        "auth": access_token,
+    # Возвращаем результат в БП
+    client_endpoint = get_client_endpoint()
+    access_token = get_access_token()
+    return_url = f"{client_endpoint}bizproc.event.send.json"
+    return_resp = requests.post(return_url, params={"auth": access_token}, json={
         "event_token": event_token,
         "return_values": {"file_id": file_id},
-        "log_message": f"Документ сгенерирован: {unique_filename}",
     })
     logger.info(f"Результат отправки в БП: {return_resp.text}")
 
     return {"status": "ok", "file_id": file_id}
-
-
-@app.post("/generate")
-async def generate_document(req: GenerateRequest):
-    """Ручная генерация документа через POST запрос (для тестирования)"""
-    if not BITRIX_WEBHOOK:
-        raise HTTPException(status_code=500, detail="BITRIX_WEBHOOK_URL не настроен")
-
-    logger.info(f"Генерация документа: {req.filename}")
-
-    template_bytes = b24_download_file(req.template_id)
-    doc = Document(io.BytesIO(template_bytes))
-    replace_text(doc, req.data)
-
-    for sig in req.signatures:
-        logger.info(f"Скачиваем подпись ID={sig.signature_id} для {sig.placeholder}")
-        sign_bytes = b24_download_file(sig.signature_id)
-        replace_image(doc, sig.placeholder, sign_bytes)
-
-    output = io.BytesIO()
-    doc.save(output)
-    output.seek(0)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name, ext = req.filename.rsplit(".", 1) if "." in req.filename else (req.filename, "docx")
-    unique_filename = f"{name}_{timestamp}.{ext}"
-
-    logger.info(f"Загружаем в папку ID={req.folder_id} как {unique_filename}")
-    file_id = b24_upload_file(req.folder_id, unique_filename, output.read())
-
-    logger.info(f"Готово! ID файла: {file_id}")
-    return {"file_id": file_id, "filename": unique_filename}
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-# === Форма выдачи наличных ===
-
-from fastapi import Response
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel as PydanticBase
-from typing import List as TypingList
-
-
-class Position(PydanticBase):
-    name: str
-    amount: float
-
-
-class SubmitRequest(PydanticBase):
-    title: str
-    positions: TypingList[Position]
-    user_id: str = ""
-    auth_token: str = ""
 
 
 @app.get("/form", response_class=HTMLResponse)
@@ -558,60 +465,49 @@ async def submit(req: SubmitRequest):
     и запускает бизнес-процесс в Битрикс24.
     """
     try:
-        tokens = load_tokens()
-        client_endpoint = tokens.get("client_endpoint", "")
-        access_token = get_access_token()
+        access_token = refresh_access_token()
+        client_endpoint = get_client_endpoint()
 
-        # Считаем итоговую сумму
         total = sum(p.amount for p in req.positions)
-
-        # Формируем строку назначения для поля процесса
-        # Формат: "Краска|5000\nДерево|10000"
         positions_str = "\n".join(f"{p.name}|{int(p.amount)}" for p in req.positions)
 
-        # Создаём элемент процесса «Выдача наличных»
-        # Нужен IBLOCK_ID процесса — берём из переменной окружения
-        iblock_id = os.getenv("CASH_REQUEST_IBLOCK_ID", "")
-        if not iblock_id:
-            return {"success": False, "error": "CASH_REQUEST_IBLOCK_ID не настроен"}
-
-        # Создаём элемент
+        # Создаём элемент процесса
         create_url = f"{client_endpoint}lists.element.add.json"
         element_resp = requests.post(create_url, params={"auth": access_token}, json={
-            "IBLOCK_TYPE_ID": "lists",
-            "IBLOCK_ID": iblock_id,
-            "ELEMENT_CODE": "",
+            "IBLOCK_TYPE_ID": "bitrix_processes",
+            "IBLOCK_ID": CASH_REQUEST_IBLOCK_ID,
+            "ELEMENT_CODE": f"cash_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
             "FIELDS": {
                 "NAME": req.title,
-                "PROPERTY_VALUES": {
-                    "SUMMA": str(total),
-                    "NAZNACHENIE": positions_str,
-                }
+                FIELD_SUMMA: f"{int(total)}|RUB",
+                FIELD_NAZNACHENIE: positions_str,
             }
         })
+        logger.info(f"Ответ lists.element.add: {element_resp.status_code} {element_resp.text[:300]}")
         element_resp.raise_for_status()
-        element_data = element_resp.json()
-        element_id = element_data.get("result")
+        element_id = element_resp.json().get("result")
 
         if not element_id:
-            logger.error(f"Ошибка создания элемента: {element_data}")
             return {"success": False, "error": "Не удалось создать заявку"}
 
         logger.info(f"Создан элемент ID={element_id}")
 
         # Запускаем бизнес-процесс
-        bp_template_id = os.getenv("CASH_REQUEST_BP_ID", "592")
         bp_url = f"{client_endpoint}bizproc.workflow.start.json"
         bp_resp = requests.post(bp_url, params={"auth": access_token}, json={
-            "TEMPLATE_ID": bp_template_id,
+            "TEMPLATE_ID": CASH_REQUEST_BP_ID,
             "DOCUMENT_ID": ["lists", "BizprocDocument", str(element_id)],
             "PARAMETERS": {}
         })
-        bp_data = bp_resp.json()
-        logger.info(f"Запуск БП: {bp_data}")
+        logger.info(f"Запуск БП: {bp_resp.json()}")
 
         return {"success": True, "element_id": element_id}
 
     except Exception as e:
         logger.error(f"Ошибка submit: {e}")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
