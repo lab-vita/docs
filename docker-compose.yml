@@ -9,6 +9,8 @@ services:
       - "5001:5000"
     env_file:
       - .env
+    volumes:
+      - ./tokens:/app/tokens.json
     logging:
       driver: "json-file"
       options:
