@@ -522,3 +522,84 @@ async def generate_document(req: GenerateRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# === Форма выдачи наличных ===
+
+from fastapi import Response
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel as PydanticBase
+from typing import List as TypingList
+
+
+class Position(PydanticBase):
+    name: str
+    amount: float
+
+
+class SubmitRequest(PydanticBase):
+    title: str
+    positions: TypingList[Position]
+    user_id: str = ""
+    auth_token: str = ""
+
+
+@app.get("/form", response_class=HTMLResponse)
+async def form():
+    """Отдаёт HTML форму выдачи наличных"""
+    with open("/app/form.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.post("/submit")
+async def submit(req: SubmitRequest):
+    """
+    Принимает данные формы, создаёт элемент процесса
+    и запускает бизнес-процесс в Битрикс24.
+    """
+    try:
+        tokens = load_tokens()
+        client_endpoint = tokens.get("client_endpoint", "")
+        access_token = get_access_token()
+
+        # Считаем итоговую сумму
+        total = sum(p.amount for p in req.positions)
+
+        # Формируем строку назначения для поля процесса
+        # Формат: "Краска|5000\nДерево|10000"
+        positions_str = "\n".join(f"{p.name}|{int(p.amount)}" for p in req.positions)
+
+        # Создаём элемент процесса «Выдача наличных»
+        # Нужен IBLOCK_ID процесса — берём из переменной окружения
+        iblock_id = os.getenv("CASH_REQUEST_IBLOCK_ID", "")
+        if not iblock_id:
+            return {"success": False, "error": "CASH_REQUEST_IBLOCK_ID не настроен"}
+
+        # Создаём элемент
+        create_url = f"{client_endpoint}lists.element.add.json"
+        element_resp = requests.post(create_url, params={"auth": access_token}, json={
+            "IBLOCK_TYPE_ID": "lists",
+            "IBLOCK_ID": iblock_id,
+            "ELEMENT_CODE": "",
+            "FIELDS": {
+                "NAME": req.title,
+                "PROPERTY_VALUES": {
+                    "SUMMA": str(total),
+                    "NAZNACHENIE": positions_str,
+                }
+            }
+        })
+        element_resp.raise_for_status()
+        element_data = element_resp.json()
+        element_id = element_data.get("result")
+
+        if not element_id:
+            logger.error(f"Ошибка создания элемента: {element_data}")
+            return {"success": False, "error": "Не удалось создать заявку"}
+
+        logger.info(f"Создан элемент ID={element_id}")
+        return {"success": True, "element_id": element_id}
+
+    except Exception as e:
+        logger.error(f"Ошибка submit: {e}")
+        return {"success": False, "error": str(e)}
