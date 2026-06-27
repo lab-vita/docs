@@ -4,13 +4,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from docx import Document
+from docx.oxml.ns import qn
 import logging
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Document Generator for Bitrix24")
+app = FastAPI(title="Bitrix24 Business Process Document Generator")
 
 # URL вебхука Битрикс24 берётся из переменной окружения
 BITRIX_WEBHOOK = os.getenv("BITRIX_WEBHOOK_URL")
@@ -89,19 +90,15 @@ def replace_paragraph_text(paragraph, data: dict):
     for key, value in data.items():
         placeholder = f"${{{key}}}"
 
-        # Быстрая проверка — есть ли переменная в параграфе вообще
         if placeholder not in paragraph.text:
             continue
 
-        # Собираем полный текст из всех run-ов
         full_text = "".join(run.text for run in paragraph.runs)
         if placeholder not in full_text:
             continue
 
-        # Заменяем переменную значением
         new_text = full_text.replace(placeholder, str(value))
 
-        # Записываем в первый run, остальные очищаем чтобы не дублировать
         if paragraph.runs:
             paragraph.runs[0].text = new_text
             for run in paragraph.runs[1:]:
@@ -110,16 +107,67 @@ def replace_paragraph_text(paragraph, data: dict):
 
 def replace_text(doc: Document, data: dict):
     """Заменяет текстовые переменные во всём документе — в параграфах и таблицах"""
-    # Обрабатываем параграфы основного текста
     for paragraph in doc.paragraphs:
         replace_paragraph_text(paragraph, data)
 
-    # Обрабатываем ячейки таблиц
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     replace_paragraph_text(paragraph, data)
+
+
+def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
+    """
+    Заменяет картинку-заглушку в документе на реальное изображение подписи.
+
+    Поиск картинки ведётся по полю "Описание" замещающего текста (Alt Text).
+    В шаблоне Word: правая кнопка на картинке → Изменить замещающий текст →
+    поле "Описание" = placeholder_desc (например SIGN_EMPLOYEE).
+
+    Замена происходит на уровне бинарных данных — blob изображения
+    заменяется напрямую в part документа без изменения размеров и положения.
+    """
+
+    def process_paragraphs(paragraphs):
+        for p in paragraphs:
+            for run in p.runs:
+                # Ищем все inline и anchor изображения в run-е
+                drawings = (
+                        run._element.findall('.//' + qn('wp:inline')) +
+                        run._element.findall('.//' + qn('wp:anchor'))
+                )
+                for drawing in drawings:
+                    # Получаем docPr — блок с метаданными изображения
+                    docPr = drawing.find('.//' + qn('wp:docPr'))
+                    if docPr is None:
+                        continue
+
+                    # Проверяем совпадение замещающего текста
+                    if docPr.get('descr', '') != placeholder_desc:
+                        continue
+
+                    # Находим blip — ссылку на файл изображения внутри документа
+                    blip = drawing.find('.//' + qn('a:blip'))
+                    if blip is None:
+                        continue
+
+                    # Получаем relationship ID и заменяем blob
+                    r_embed = blip.get(qn('r:embed'))
+                    img_part = doc.part.related_parts[r_embed]
+                    img_part._blob = image_bytes
+                    logger.info(f"Заменена картинка: {placeholder_desc}")
+                    return True
+        return False
+
+    # Ищем в основных параграфах
+    process_paragraphs(doc.paragraphs)
+
+    # Ищем в таблицах
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                process_paragraphs(cell.paragraphs)
 
 
 # === Эндпоинты ===
