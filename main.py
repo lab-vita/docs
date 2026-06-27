@@ -101,8 +101,8 @@ def b24_call(method: str, params: dict, use_webhook: bool = False) -> dict:
             url = f"{client_endpoint}{method}.json"
         else:
             url = f"https://{domain}/rest/{method}.json"
-        logger.info(f"B24 call: {url}")
-        resp = requests.post(url, json={**params, "auth": access_token})
+        logger.info(f"B24 call: {url}, auth={access_token[:10]}...")
+        resp = requests.post(url, params={"auth": access_token}, json=params)
 
     resp.raise_for_status()
     result = resp.json()
@@ -379,13 +379,35 @@ async def activity_handler(request: Request):
     body = await request.body()
     logger.info(f"Вызов активити: {body[:500]}")
 
+    # Битрикс24 шлёт данные как form-encoded
     try:
-        data = json.loads(body)
-    except Exception:
         form = await request.form()
         data = dict(form)
+    except Exception:
+        data = {}
 
-    props = data.get("properties", {})
+    if not data:
+        try:
+            data = json.loads(body)
+        except Exception:
+            data = {}
+
+    logger.info(f"Распарсенные данные: {dict(list(data.items())[:5])}")
+
+    # Извлекаем props из form-encoded формата properties[key]
+    props = {}
+    for key, value in data.items():
+        if key.startswith("properties[") and key.endswith("]"):
+            prop_key = key[11:-1]
+            # Множественные поля приходят с суффиксом [0], [1] и т.д.
+            if "[" in prop_key:
+                base_key = prop_key[:prop_key.index("[")]
+                if base_key not in props:
+                    props[base_key] = []
+                if isinstance(props[base_key], list):
+                    props[base_key].append(value)
+            else:
+                props[prop_key] = value
     event_token = data.get("event_token")
     auth = data.get("auth", {})
 
