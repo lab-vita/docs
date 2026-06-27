@@ -303,7 +303,9 @@ def register_activity(domain: str, access_token: str):
         },
     }
 
-    url = f"https://{domain}/rest/bizproc.activity.add.json"
+    tokens = load_tokens()
+    client_endpoint = tokens.get("client_endpoint") or f"https://{domain}/rest/"
+    url = f"{client_endpoint}bizproc.activity.add.json"
     resp = requests.post(url, json=params)
     resp.raise_for_status()
     result = resp.json()
@@ -313,20 +315,30 @@ def register_activity(domain: str, access_token: str):
 
 # === Эндпоинты ===
 
-@app.get("/install")
+@app.api_route("/install", methods=["GET", "POST"])
 async def install(request: Request):
     """
     Вызывается Битрикс24 при установке приложения.
     Сохраняет токены и регистрирует активити в дизайнере БП.
     """
-    params = dict(request.query_params)
+    # Битрикс24 может передавать параметры как в query string так и в теле POST
+    query_params = dict(request.query_params)
+    try:
+        form_params = dict(await request.form())
+    except Exception:
+        form_params = {}
+
+    # Объединяем параметры, form имеет приоритет
+    params = {**query_params, **form_params}
     logger.info(f"Установка приложения: {params}")
 
     tokens = {
-        "access_token": params.get("AUTH_ID"),
-        "refresh_token": params.get("AUTH_REFRESH_ID"),
-        "domain": params.get("DOMAIN"),
-        "member_id": params.get("member_id"),
+        "access_token": params.get("AUTH_ID") or params.get("auth_id") or params.get("auth[access_token]"),
+        "refresh_token": params.get("AUTH_REFRESH_ID") or params.get("auth_refresh_id") or params.get(
+            "auth[refresh_token]"),
+        "domain": params.get("DOMAIN") or params.get("domain") or params.get("auth[domain]"),
+        "member_id": params.get("member_id") or params.get("auth[member_id]"),
+        "client_endpoint": params.get("auth[client_endpoint]"),
     }
     save_tokens(tokens)
 
