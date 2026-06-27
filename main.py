@@ -94,8 +94,14 @@ def b24_call(method: str, params: dict, use_webhook: bool = False) -> dict:
     else:
         access_token = get_access_token()
         tokens = load_tokens()
+        # Используем client_endpoint если есть, иначе формируем из domain
+        client_endpoint = tokens.get("client_endpoint", "")
         domain = tokens.get("domain", "")
-        url = f"https://{domain}/rest/{method}.json"
+        if client_endpoint:
+            url = f"{client_endpoint}{method}.json"
+        else:
+            url = f"https://{domain}/rest/{method}.json"
+        logger.info(f"B24 call: {url}")
         resp = requests.post(url, json={**params, "auth": access_token})
 
     resp.raise_for_status()
