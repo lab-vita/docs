@@ -190,7 +190,7 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
     Создаёт новый независимый part чтобы разные подписи не шарили один файл.
     """
     from docx.opc.part import Part
-    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.opc.packuri import PackURI
 
     def process_paragraphs(paragraphs):
         for p in paragraphs:
@@ -211,7 +211,7 @@ def replace_image(doc: Document, placeholder_desc: str, image_bytes: bytes):
 
                     # Создаём новый независимый part для изображения
                     image_part = Part(
-                        partname=f"/word/media/sign_{placeholder_desc}.png",
+                        partname=PackURI(f"/word/media/sign_{placeholder_desc}.png"),
                         content_type="image/png",
                         blob=image_bytes,
                         package=doc.part.package
