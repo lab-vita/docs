@@ -445,6 +445,26 @@ async def activity_handler(request: Request):
         tokens["client_endpoint"] = data.get("auth[client_endpoint]", tokens.get("client_endpoint", ""))
         save_tokens(tokens)
 
+    # Форматируем REQUEST_GOAL из сырых данных "Назначение|Сумма\nНазначение2|Сумма2"
+    if "REQUEST_GOAL" in doc_data:
+        raw_goal = doc_data["REQUEST_GOAL"]
+        lines = [l.strip() for l in raw_goal.split("\n") if l.strip()]
+        if len(lines) == 1:
+            # Одна позиция — берём только название без суммы
+            doc_data["REQUEST_GOAL"] = lines[0].split("|")[0].strip()
+        else:
+            # Несколько позиций — нумерованный список
+            formatted = []
+            for i, line in enumerate(lines, 1):
+                parts = line.split("|")
+                name = parts[0].strip()
+                amount = parts[1].strip() if len(parts) > 1 else ""
+                if amount:
+                    formatted.append(f"{i}. {name} — {int(float(amount)):,} руб.".replace(",", " "))
+                else:
+                    formatted.append(f"{i}. {name}")
+            doc_data["REQUEST_GOAL"] = "\n" + "\n".join(formatted)
+
     file_id = generate_document(template_id, folder_id, filename, doc_data, signatures)
 
     # Возвращаем результат в БП
@@ -514,6 +534,17 @@ async def submit(req: SubmitRequest):
         logger.info(f"Submit: user_id={req.user_id}, title={req.title}")
         total = sum(p.amount for p in req.positions)
         positions_str = "\n".join(f"{p.name}|{int(p.amount)}" for p in req.positions)
+
+        # Формируем красивый текст цели для документа
+        if len(req.positions) == 1:
+            # Одна позиция — простой текст
+            request_goal = req.positions[0].name
+        else:
+            # Несколько позиций — нумерованный список
+            lines = ["\n"]
+            for i, p in enumerate(req.positions, 1):
+                lines.append(f"{i}. {p.name} — {int(p.amount):,} руб.".replace(",", " "))
+            request_goal = "\n".join(lines)
 
         # Создаём элемент процесса
         fields = {
