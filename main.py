@@ -11,20 +11,17 @@ from docx.oxml.ns import qn
 from datetime import datetime
 import logging
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Document Generator for Bitrix24")
 
-# Константы приложения из переменных окружения
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-BITRIX_WEBHOOK = os.getenv("BITRIX_WEBHOOK_URL")  # используется только для загрузки файлов на Диск
+BITRIX_WEBHOOK = os.getenv("BITRIX_WEBHOOK_URL")
 APP_URL = os.getenv("APP_URL", "https://docs.lab-vita.ru")
 TOKEN_FILE = "/app/tokens.json"
 
-# ID полей процесса «Выдача наличных» (можно переопределить через .env)
 CASH_REQUEST_IBLOCK_ID = os.getenv("CASH_REQUEST_IBLOCK_ID", "94")
 CASH_REQUEST_BP_ID = os.getenv("CASH_REQUEST_BP_ID", "592")
 FIELD_SUMMA = os.getenv("FIELD_SUMMA", "PROPERTY_516")
@@ -48,6 +45,7 @@ class SubmitRequest(BaseModel):
     positions: List[Position]
     user_id: str = ""
     auth_token: str = ""
+    user_auth_id: str = ""  # Токен пользователя — используется для создания элемента от его имени
 
 
 # === Работа с токенами ===
@@ -276,7 +274,15 @@ def generate_document(template_id: str, folder_id: str, filename: str, data: dic
 # === Регистрация активити в Битрикс24 ===
 
 def register_activity(access_token: str):
-    """Регистрирует кастомное активити в дизайнере БП"""
+    """Регистрирует кастомное активити в дизайнере БП и пункт в левом меню"""
+    client_endpoint = get_client_endpoint()
+
+    # Удаляем старое активити если уже существует
+    requests.post(f"{client_endpoint}bizproc.activity.delete.json", json={
+        "auth": access_token,
+        "CODE": "generate_document",
+    })
+
     params = {
         "auth": access_token,
         "CODE": "generate_document",
@@ -330,26 +336,18 @@ def register_activity(access_token: str):
         },
     }
 
-    client_endpoint = get_client_endpoint()
-    url = f"{client_endpoint}bizproc.activity.add.json"
-    resp = requests.post(url, json=params)
+    resp = requests.post(f"{client_endpoint}bizproc.activity.add.json", json=params)
     resp.raise_for_status()
-    result = resp.json()
-    logger.info(f"Результат регистрации активити: {result}")
+    logger.info(f"Активити зарегистрировано: {resp.json().get('result')}")
 
-    # Регистрируем кнопку в ленте новостей
-    placement_url = f"{client_endpoint}placement.bind.json"
-    placement_resp = requests.post(placement_url, json={
+    # Регистрируем пункт в левом меню
+    placement_resp = requests.post(f"{client_endpoint}placement.bind.json", json={
         "auth": access_token,
-        "PLACEMENT": "LIVE_FEED_POST_ADD_BUTTON",
+        "PLACEMENT": "LEFT_MENU",
         "HANDLER": f"{APP_URL}/form",
         "TITLE": "Выдача наличных",
-        "DESCRIPTION": "Запрос на выдачу наличных денежных средств",
-        "OPTIONS": {"iconName": "money"},
     })
-    logger.info(f"Регистрация кнопки в ленте: {placement_resp.json()}")
-
-    return result
+    logger.info(f"Регистрация в левом меню: {placement_resp.json()}")
 
 
 # === Эндпоинты ===
@@ -358,7 +356,7 @@ def register_activity(access_token: str):
 async def install(request: Request):
     """
     Вызывается Битрикс24 при установке приложения.
-    Сохраняет токены и регистрирует активити в дизайнере БП.
+    Сохраняет токены и регистрирует активити и пункт меню.
     """
     query_params = dict(request.query_params)
     try:
@@ -380,9 +378,8 @@ async def install(request: Request):
 
     try:
         register_activity(tokens["access_token"])
-        logger.info("Активити зарегистрировано")
     except Exception as e:
-        logger.error(f"Ошибка регистрации активити: {e}")
+        logger.error(f"Ошибка регистрации: {e}")
 
     return {"status": "ok", "message": "Приложение установлено"}
 
@@ -430,7 +427,6 @@ async def activity_handler(request: Request):
             props[rest[:-1]] = value
 
     event_token = data.get("event_token")
-
     template_id = props.get("template_id", "")
     folder_id = props.get("folder_id", "")
     filename = props.get("filename", "document.docx")
@@ -464,43 +460,78 @@ async def activity_handler(request: Request):
     return {"status": "ok", "file_id": file_id}
 
 
-@app.get("/form", response_class=HTMLResponse)
-async def form():
-    """Отдаёт HTML форму выдачи наличных"""
+@app.api_route("/form", methods=["GET", "POST"], response_class=HTMLResponse)
+async def form(request: Request):
+    """
+    Отдаёт HTML форму выдачи наличных.
+    При открытии через Битрикс24 получает user_id и токен пользователя
+    и подставляет их в HTML для использования при отправке заявки.
+    """
+    query = dict(request.query_params)
+    try:
+        form_data = dict(await request.form())
+    except Exception:
+        form_data = {}
+
+    # Получаем user_id через токен из запроса Битрикс24
+    user_id = ""
+    auth_id = form_data.get("AUTH_ID", "")
+    domain = query.get("DOMAIN", "")
+    if auth_id and domain:
+        try:
+            profile_resp = requests.post(
+                f"https://{domain}/rest/profile.json",
+                params={"auth": auth_id}
+            )
+            profile = profile_resp.json().get("result", {})
+            user_id = str(profile.get("ID", ""))
+            logger.info(f"User ID из профиля: {user_id}")
+        except Exception as e:
+            logger.error(f"Ошибка получения профиля: {e}")
+
     with open("/app/form.html", "r", encoding="utf-8") as f:
-        return f.read()
+        html = f.read()
+
+    # Подставляем user_id и auth_id в HTML
+    html = html.replace("const userId = urlParams.get('user_id') || '';",
+                        f"const userId = urlParams.get('user_id') || '{user_id}';")
+    html = html.replace("const authToken = urlParams.get('auth_token') || '';",
+                        f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
+    return html
 
 
 @app.post("/submit")
 async def submit(req: SubmitRequest):
     """
     Принимает данные формы, создаёт элемент процесса
-    и запускает бизнес-процесс в Битрикс24.
+    и запускает бизнес-процесс в Битрикс24 от имени пользователя.
     """
     try:
-        access_token = refresh_access_token()
+        # Используем токен пользователя — тогда элемент создаётся от его имени
+        access_token = req.user_auth_id if req.user_auth_id else refresh_access_token()
         client_endpoint = get_client_endpoint()
 
+        logger.info(f"Submit: user_id={req.user_id}, title={req.title}")
         total = sum(p.amount for p in req.positions)
         positions_str = "\n".join(f"{p.name}|{int(p.amount)}" for p in req.positions)
 
         # Создаём элемент процесса
-        create_url = f"{client_endpoint}lists.element.add.json"
         fields = {
             "NAME": req.title,
             FIELD_SUMMA: f"{int(total)}|RUB",
             FIELD_NAZNACHENIE: positions_str,
         }
-        # Если передан ID пользователя — указываем его как создателя
-        if req.user_id:
-            fields["CREATED_BY"] = req.user_id
 
-        element_resp = requests.post(create_url, params={"auth": access_token}, json={
-            "IBLOCK_TYPE_ID": "bitrix_processes",
-            "IBLOCK_ID": CASH_REQUEST_IBLOCK_ID,
-            "ELEMENT_CODE": f"cash_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
-            "FIELDS": fields
-        })
+        element_resp = requests.post(
+            f"{client_endpoint}lists.element.add.json",
+            params={"auth": access_token},
+            json={
+                "IBLOCK_TYPE_ID": "bitrix_processes",
+                "IBLOCK_ID": CASH_REQUEST_IBLOCK_ID,
+                "ELEMENT_CODE": f"cash_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+                "FIELDS": fields
+            }
+        )
         logger.info(f"Ответ lists.element.add: {element_resp.status_code} {element_resp.text[:300]}")
         element_resp.raise_for_status()
         element_id = element_resp.json().get("result")
@@ -510,17 +541,16 @@ async def submit(req: SubmitRequest):
 
         logger.info(f"Создан элемент ID={element_id}")
 
-        # Запускаем бизнес-процесс от имени пользователя
-        bp_payload = {
-            "TEMPLATE_ID": CASH_REQUEST_BP_ID,
-            "DOCUMENT_ID": ["lists", "BizprocDocument", str(element_id)],
-            "PARAMETERS": {}
-        }
-        if req.user_id:
-            bp_payload["USER_ID"] = req.user_id
-
-        bp_url = f"{client_endpoint}bizproc.workflow.start.json"
-        bp_resp = requests.post(bp_url, params={"auth": access_token}, json=bp_payload)
+        # Запускаем бизнес-процесс
+        bp_resp = requests.post(
+            f"{client_endpoint}bizproc.workflow.start.json",
+            params={"auth": access_token},
+            json={
+                "TEMPLATE_ID": CASH_REQUEST_BP_ID,
+                "DOCUMENT_ID": ["lists", "BizprocDocument", str(element_id)],
+                "PARAMETERS": {}
+            }
+        )
         logger.info(f"Запуск БП: {bp_resp.json()}")
 
         return {"success": True, "element_id": element_id}
