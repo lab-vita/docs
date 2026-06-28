@@ -336,6 +336,19 @@ def register_activity(access_token: str):
     resp.raise_for_status()
     result = resp.json()
     logger.info(f"Результат регистрации активити: {result}")
+
+    # Регистрируем кнопку в ленте новостей
+    placement_url = f"{client_endpoint}placement.bind.json"
+    placement_resp = requests.post(placement_url, json={
+        "auth": access_token,
+        "PLACEMENT": "LIVE_FEED_POST_ADD_BUTTON",
+        "HANDLER": f"{APP_URL}/form",
+        "TITLE": "Выдача наличных",
+        "DESCRIPTION": "Запрос на выдачу наличных денежных средств",
+        "OPTIONS": {"iconName": "money"},
+    })
+    logger.info(f"Регистрация кнопки в ленте: {placement_resp.json()}")
+
     return result
 
 
@@ -473,15 +486,20 @@ async def submit(req: SubmitRequest):
 
         # Создаём элемент процесса
         create_url = f"{client_endpoint}lists.element.add.json"
+        fields = {
+            "NAME": req.title,
+            FIELD_SUMMA: f"{int(total)}|RUB",
+            FIELD_NAZNACHENIE: positions_str,
+        }
+        # Если передан ID пользователя — указываем его как создателя
+        if req.user_id:
+            fields["CREATED_BY"] = req.user_id
+
         element_resp = requests.post(create_url, params={"auth": access_token}, json={
             "IBLOCK_TYPE_ID": "bitrix_processes",
             "IBLOCK_ID": CASH_REQUEST_IBLOCK_ID,
             "ELEMENT_CODE": f"cash_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
-            "FIELDS": {
-                "NAME": req.title,
-                FIELD_SUMMA: f"{int(total)}|RUB",
-                FIELD_NAZNACHENIE: positions_str,
-            }
+            "FIELDS": fields
         })
         logger.info(f"Ответ lists.element.add: {element_resp.status_code} {element_resp.text[:300]}")
         element_resp.raise_for_status()
@@ -492,13 +510,17 @@ async def submit(req: SubmitRequest):
 
         logger.info(f"Создан элемент ID={element_id}")
 
-        # Запускаем бизнес-процесс
-        bp_url = f"{client_endpoint}bizproc.workflow.start.json"
-        bp_resp = requests.post(bp_url, params={"auth": access_token}, json={
+        # Запускаем бизнес-процесс от имени пользователя
+        bp_payload = {
             "TEMPLATE_ID": CASH_REQUEST_BP_ID,
             "DOCUMENT_ID": ["lists", "BizprocDocument", str(element_id)],
             "PARAMETERS": {}
-        })
+        }
+        if req.user_id:
+            bp_payload["USER_ID"] = req.user_id
+
+        bp_url = f"{client_endpoint}bizproc.workflow.start.json"
+        bp_resp = requests.post(bp_url, params={"auth": access_token}, json=bp_payload)
         logger.info(f"Запуск БП: {bp_resp.json()}")
 
         return {"success": True, "element_id": element_id}
