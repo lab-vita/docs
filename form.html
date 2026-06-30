@@ -301,7 +301,22 @@
 
             if (data.success) {
                 showMsg('✅ Заявка отправлена! Процесс согласования запущен.', 'success');
-                btn.textContent = 'Отправлено';
+                // Сбрасываем форму для повторного заполнения
+                setTimeout(() => {
+                    document.getElementById('title').value = '';
+                    document.getElementById('title').classList.remove('error');
+                    const positions = document.getElementById('positions');
+                    positions.innerHTML = `
+                        <div class="position-row">
+                            <input type="text" placeholder="Назначение" class="pos-name" oninput="calcTotal()">
+                            <input type="number" placeholder="Сумма" class="pos-amount" min="0" oninput="calcTotal()">
+                            <button class="btn-remove" onclick="removeRow(this)" title="Удалить">×</button>
+                        </div>`;
+                    calcTotal();
+                    document.getElementById('msg').className = 'msg';
+                    btn.disabled = false;
+                    btn.textContent = 'Отправить заявку';
+                }, 2000);
             } else {
                 showMsg('Ошибка: ' + (data.error || 'попробуйте ещё раз'), 'error');
                 btn.disabled = false;
