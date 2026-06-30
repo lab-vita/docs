@@ -14,7 +14,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Document Generator for Bitrix24")
+app = FastAPI(title="Умные бизнес-процессы")
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -26,6 +26,22 @@ CASH_REQUEST_IBLOCK_ID = os.getenv("CASH_REQUEST_IBLOCK_ID", "94")
 CASH_REQUEST_BP_ID = os.getenv("CASH_REQUEST_BP_ID", "592")
 FIELD_SUMMA = os.getenv("FIELD_SUMMA", "PROPERTY_516")
 FIELD_NAZNACHENIE = os.getenv("FIELD_NAZNACHENIE", "PROPERTY_518")
+
+APP_TITLE = "Умные бизнес-процессы"
+
+# === Реестр процессов ===
+# Единая точка регистрации доступных бизнес-процессов.
+# Чтобы добавить новый процесс — добавь запись в этот словарь
+# и соответствующий form_*.html в той же директории.
+
+PROCESSES = {
+    "cash": {
+        "title": "Выдача наличных",
+        "description": "Заявка на выдачу денежных средств под отчёт",
+        "icon": "💵",
+        "form_file": "form_cash.html",
+    },
+}
 
 
 # === Модели данных ===
@@ -466,14 +482,70 @@ def register_activity(access_token: str):
     resp.raise_for_status()
     logger.info(f"Активити зарегистрировано: {resp.json().get('result')}")
 
+    # Отвязываем старый пункт меню (если был привязан с другим заголовком/хендлером)
+    unbind_resp = requests.post(f"{client_endpoint}placement.unbind.json", json={
+        "auth": access_token,
+        "PLACEMENT": "LEFT_MENU",
+        "HANDLER": f"{APP_URL}/form",
+    })
+    logger.info(f"Отвязка старого пункта меню: {unbind_resp.json()}")
+
     # Регистрируем пункт в левом меню
     placement_resp = requests.post(f"{client_endpoint}placement.bind.json", json={
         "auth": access_token,
         "PLACEMENT": "LEFT_MENU",
-        "HANDLER": f"{APP_URL}/form",
-        "TITLE": "Выдача наличных",
+        "HANDLER": f"{APP_URL}/app",
+        "TITLE": APP_TITLE,
     })
     logger.info(f"Регистрация в левом меню: {placement_resp.json()}")
+
+
+async def resolve_user_id(query: dict, form_data: dict) -> tuple[str, str]:
+    """Получает user_id текущего пользователя через его AUTH_ID. Возвращает (user_id, auth_id)"""
+    user_id = ""
+    auth_id = form_data.get("AUTH_ID", "")
+    domain = query.get("DOMAIN", "") or form_data.get("DOMAIN", "")
+    if auth_id and domain:
+        try:
+            profile_resp = requests.post(
+                f"https://{domain}/rest/profile.json",
+                params={"auth": auth_id}
+            )
+            profile = profile_resp.json().get("result", {})
+            user_id = str(profile.get("ID", ""))
+            logger.info(f"User ID из профиля: {user_id}")
+        except Exception as e:
+            logger.error(f"Ошибка получения профиля: {e}")
+    return user_id, auth_id
+
+
+def render_form(form_file: str, user_id: str, auth_id: str) -> str:
+    """Загружает HTML формы и подставляет user_id/auth_id"""
+    with open(f"/app/{form_file}", "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("const userId = urlParams.get('user_id') || '';",
+                        f"const userId = urlParams.get('user_id') || '{user_id}';")
+    html = html.replace("const authToken = urlParams.get('auth_token') || '';",
+                        f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
+    return html
+
+
+def render_menu(user_id: str, auth_id: str) -> str:
+    """Загружает HTML меню процессов и подставляет список процессов"""
+    with open("/app/menu.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    processes_json = json.dumps(
+        {key: {"title": p["title"], "description": p["description"], "icon": p["icon"]}
+         for key, p in PROCESSES.items()},
+        ensure_ascii=False
+    )
+    html = html.replace("{{APP_TITLE}}", APP_TITLE)
+    html = html.replace("{{PROCESSES_JSON}}", processes_json)
+    html = html.replace("const userId = urlParams.get('user_id') || '';",
+                        f"const userId = urlParams.get('user_id') || '{user_id}';")
+    html = html.replace("const authToken = urlParams.get('auth_token') || '';",
+                        f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
+    return html
 
 
 # === Эндпоинты ===
@@ -513,29 +585,16 @@ async def install(request: Request):
     # Страница настроек разработчика — URI содержит /devops/edit/application/
     is_devops_page = "devops" in placement_options and "edit" in placement_options
 
-    # При открытии через LEFT_MENU или мобильное приложение — показываем форму
+    # При открытии через LEFT_MENU или мобильное приложение — показываем меню процессов
     if placement != "DEFAULT" or not is_devops_page:
-        logger.info(f"Открытие через placement={placement}, показываем форму")
-        auth_id = params.get("AUTH_ID", "")
-        user_id = ""
-        if auth_id and domain:
-            try:
-                profile_resp = requests.post(
-                    f"https://{domain}/rest/profile.json",
-                    params={"auth": auth_id}
-                )
-                profile = profile_resp.json().get("result", {})
-                user_id = str(profile.get("ID", ""))
-            except Exception as e:
-                logger.error(f"Ошибка получения профиля: {e}")
-
-        with open("/app/form.html", "r", encoding="utf-8") as f:
-            html = f.read()
-        html = html.replace("const userId = urlParams.get('user_id') || '';",
-                            f"const userId = urlParams.get('user_id') || '{user_id}';")
-        html = html.replace("const authToken = urlParams.get('auth_token') || '';",
-                            f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
-        return HTMLResponse(html)
+        logger.info(f"Открытие через placement={placement}, показываем меню")
+        user_id, auth_id = await resolve_user_id(query_params, params)
+        process_key = query_params.get("process", "")
+        if process_key:
+            process = PROCESSES.get(process_key)
+            if process:
+                return HTMLResponse(render_form(process["form_file"], user_id, auth_id))
+        return HTMLResponse(render_menu(user_id, auth_id))
 
     # Страница настроек разработчика — регистрируем активити и показываем экран установки
     try:
@@ -543,22 +602,23 @@ async def install(request: Request):
     except Exception as e:
         logger.error(f"Ошибка регистрации: {e}")
 
-    return HTMLResponse("""
+    return HTMLResponse(f"""
 <!DOCTYPE html><html><head><meta charset="UTF-8">
-<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f5;}
-.card{background:#fff;border-radius:8px;padding:32px 40px;box-shadow:0 2px 8px rgba(0,0,0,.1);text-align:center;}
-h2{color:#1a1a1a;margin-bottom:8px;} p{color:#666;font-size:14px;}
+<style>body{{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f5;}}
+.card{{background:#fff;border-radius:8px;padding:32px 40px;box-shadow:0 2px 8px rgba(0,0,0,.1);text-align:center;}}
+h2{{color:#1a1a1a;margin-bottom:8px;}} p{{color:#666;font-size:14px;}}
 </style></head><body>
 <div class="card"><h2>✅ Приложение установлено</h2>
-<p>Откройте «Выдача наличных» в левом меню Битрикс24.</p></div>
+<p>Откройте «{APP_TITLE}» в левом меню Битрикс24.</p></div>
 </body></html>""")
 
 
 @app.api_route("/app", methods=["GET", "POST"], response_class=HTMLResponse)
 async def app_handler(request: Request):
     """
-    Обработчик приложения от Битрикс24 — отображает форму выдачи наличных.
-    Вызывается когда сотрудник открывает приложение.
+    Обработчик приложения от Битрикс24.
+    Без параметра process — показывает меню доступных процессов.
+    С параметром process=<key> — открывает соответствующую форму.
     """
     query = dict(request.query_params)
     try:
@@ -566,29 +626,17 @@ async def app_handler(request: Request):
     except Exception:
         form_data = {}
 
-    user_id = ""
-    auth_id = form_data.get("AUTH_ID", "")
-    domain = query.get("DOMAIN", "") or form_data.get("DOMAIN", "")
-    if auth_id and domain:
-        try:
-            profile_resp = requests.post(
-                f"https://{domain}/rest/profile.json",
-                params={"auth": auth_id}
-            )
-            profile = profile_resp.json().get("result", {})
-            user_id = str(profile.get("ID", ""))
-            logger.info(f"User ID из профиля: {user_id}")
-        except Exception as e:
-            logger.error(f"Ошибка получения профиля: {e}")
+    user_id, auth_id = await resolve_user_id(query, form_data)
 
-    with open("/app/form.html", "r", encoding="utf-8") as f:
-        html = f.read()
+    process_key = query.get("process", "")
 
-    html = html.replace("const userId = urlParams.get('user_id') || '';",
-                        f"const userId = urlParams.get('user_id') || '{user_id}';")
-    html = html.replace("const authToken = urlParams.get('auth_token') || '';",
-                        f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
-    return html
+    if process_key:
+        process = PROCESSES.get(process_key)
+        if not process:
+            return HTMLResponse(f"<p>Неизвестный процесс: {process_key}</p>", status_code=404)
+        return render_form(process["form_file"], user_id, auth_id)
+
+    return render_menu(user_id, auth_id)
 
 
 @app.post("/activity-handler")
@@ -683,11 +731,11 @@ async def activity_handler(request: Request):
 
 
 @app.api_route("/form", methods=["GET", "POST"], response_class=HTMLResponse)
-async def form(request: Request):
+async def form_legacy(request: Request):
     """
-    Отдаёт HTML форму выдачи наличных.
-    При открытии через Битрикс24 получает user_id и токен пользователя
-    и подставляет их в HTML для использования при отправке заявки.
+    Устаревший прямой эндпоинт формы — оставлен для обратной совместимости
+    со старыми ссылками. Открывает форму "Выдача наличных" напрямую.
+    Новые интеграции должны использовать /app?process=<key>.
     """
     query = dict(request.query_params)
     try:
@@ -695,31 +743,8 @@ async def form(request: Request):
     except Exception:
         form_data = {}
 
-    # Получаем user_id через токен из запроса Битрикс24
-    user_id = ""
-    auth_id = form_data.get("AUTH_ID", "")
-    domain = query.get("DOMAIN", "")
-    if auth_id and domain:
-        try:
-            profile_resp = requests.post(
-                f"https://{domain}/rest/profile.json",
-                params={"auth": auth_id}
-            )
-            profile = profile_resp.json().get("result", {})
-            user_id = str(profile.get("ID", ""))
-            logger.info(f"User ID из профиля: {user_id}")
-        except Exception as e:
-            logger.error(f"Ошибка получения профиля: {e}")
-
-    with open("/app/form.html", "r", encoding="utf-8") as f:
-        html = f.read()
-
-    # Подставляем user_id и auth_id в HTML
-    html = html.replace("const userId = urlParams.get('user_id') || '';",
-                        f"const userId = urlParams.get('user_id') || '{user_id}';")
-    html = html.replace("const authToken = urlParams.get('auth_token') || '';",
-                        f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
-    return html
+    user_id, auth_id = await resolve_user_id(query, form_data)
+    return render_form(PROCESSES["cash"]["form_file"], user_id, auth_id)
 
 
 @app.post("/submit")
