@@ -142,61 +142,55 @@ def replace_paragraph_text(paragraph, data: dict):
     Заменяет переменные вида ${KEY} в одном параграфе.
     Собирает полный текст из всех run-ов чтобы обойти разбивку Word.
     Если значение содержит \n — разбивает параграф на несколько.
-    Возвращает список новых параграфов если было разбиение, иначе None.
     """
     import copy
-    from lxml import etree
+
+    # Сначала собираем полный текст параграфа и делаем все замены за один проход
+    full_text = "".join(run.text for run in paragraph.runs)
+    original_text = full_text
 
     for key, value in data.items():
         placeholder = f"${{{key}}}"
-        if placeholder not in paragraph.text:
-            continue
-        full_text = "".join(run.text for run in paragraph.runs)
-        if placeholder not in full_text:
-            continue
+        if placeholder in full_text:
+            full_text = full_text.replace(placeholder, str(value))
 
-        new_text = full_text.replace(placeholder, str(value))
+    # Ничего не изменилось — выходим
+    if full_text == original_text:
+        return
 
-        # Если нет переносов строк — простая замена
-        if "\n" not in new_text:
-            if paragraph.runs:
-                paragraph.runs[0].text = new_text
-                for run in paragraph.runs[1:]:
-                    run.text = ""
-            return
-
-        # Есть переносы — нужно разбить на несколько параграфов
-        lines = new_text.split("\n")
-        # Первую строку вставляем в текущий параграф
-        first_line = lines[0]
+    # Если нет переносов строк — простая замена
+    if "\n" not in full_text:
         if paragraph.runs:
-            paragraph.runs[0].text = first_line
+            paragraph.runs[0].text = full_text
             for run in paragraph.runs[1:]:
                 run.text = ""
+        return
 
-        # Остальные строки вставляем как новые параграфы после текущего
-        parent = paragraph._element.getparent()
-        insert_idx = list(parent).index(paragraph._element)
-        for i, line in enumerate(lines[1:], 1):
-            new_p = copy.deepcopy(paragraph._element)
-            # Очищаем все runs в копии и вставляем нужный текст
-            for r in new_p.findall('.//' + qn('w:r')):
-                t = r.find(qn('w:t'))
-                if t is not None:
-                    t.text = line if r == new_p.findall('.//' + qn('w:r'))[0] else ""
-                    if line and (line[0] == ' ' or line[-1] == ' '):
-                        t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
-            # Удаляем лишние runs, оставляем только первый
-            runs_in_new_p = new_p.findall('.//' + qn('w:r'))
-            for r in runs_in_new_p[1:]:
-                r.getparent().remove(r)
-            if runs_in_new_p:
-                t = runs_in_new_p[0].find(qn('w:t'))
-                if t is not None:
-                    t.text = line
-                    if line and (line[0] == ' ' or line[-1] == ' '):
-                        t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
-            parent.insert(insert_idx + i, new_p)
+    # Есть переносы — разбиваем на несколько параграфов
+    lines = full_text.split("\n")
+
+    # Первую строку вставляем в текущий параграф
+    if paragraph.runs:
+        paragraph.runs[0].text = lines[0]
+        for run in paragraph.runs[1:]:
+            run.text = ""
+
+    # Остальные строки вставляем как новые параграфы после текущего
+    parent = paragraph._element.getparent()
+    insert_idx = list(parent).index(paragraph._element)
+    for i, line in enumerate(lines[1:], 1):
+        new_p = copy.deepcopy(paragraph._element)
+        runs_in_new_p = new_p.findall('.//' + qn('w:r'))
+        # Удаляем лишние runs, оставляем только первый
+        for r in runs_in_new_p[1:]:
+            r.getparent().remove(r)
+        if runs_in_new_p:
+            t = runs_in_new_p[0].find(qn('w:t'))
+            if t is not None:
+                t.text = line
+                if line and (line[0] == ' ' or line[-1] == ' '):
+                    t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+        parent.insert(insert_idx + i, new_p)
 
 
 def replace_text(doc: Document, data: dict):
