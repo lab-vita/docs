@@ -367,12 +367,17 @@ async def install(request: Request):
     params = {**query_params, **form_params}
     logger.info(f"Установка приложения: {params}")
 
+    domain = params.get("DOMAIN") or params.get("auth[domain]", "")
+    client_endpoint = (
+            params.get("auth[client_endpoint]")
+            or (f"https://{domain}/rest/" if domain else None)
+    )
     tokens = {
         "access_token": params.get("AUTH_ID") or params.get("auth[access_token]"),
         "refresh_token": params.get("AUTH_REFRESH_ID") or params.get("auth[refresh_token]"),
-        "domain": params.get("DOMAIN") or params.get("auth[domain]"),
+        "domain": domain,
         "member_id": params.get("member_id") or params.get("auth[member_id]"),
-        "client_endpoint": params.get("auth[client_endpoint]"),
+        "client_endpoint": client_endpoint,
     }
     save_tokens(tokens)
 
