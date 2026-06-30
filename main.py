@@ -381,6 +381,33 @@ async def install(request: Request):
     }
     save_tokens(tokens)
 
+    placement = params.get("PLACEMENT", "DEFAULT")
+
+    # При открытии через LEFT_MENU — показываем форму
+    if placement != "DEFAULT":
+        logger.info(f"Открытие через placement={placement}, показываем форму")
+        auth_id = params.get("AUTH_ID", "")
+        user_id = ""
+        if auth_id and domain:
+            try:
+                profile_resp = requests.post(
+                    f"https://{domain}/rest/profile.json",
+                    params={"auth": auth_id}
+                )
+                profile = profile_resp.json().get("result", {})
+                user_id = str(profile.get("ID", ""))
+            except Exception as e:
+                logger.error(f"Ошибка получения профиля: {e}")
+
+        with open("/app/form.html", "r", encoding="utf-8") as f:
+            html = f.read()
+        html = html.replace("const userId = urlParams.get('user_id') || '';",
+                            f"const userId = urlParams.get('user_id') || '{user_id}';")
+        html = html.replace("const authToken = urlParams.get('auth_token') || '';",
+                            f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
+        return HTMLResponse(html)
+
+    # DEFAULT — страница настроек, регистрируем активити и показываем экран установки
     try:
         register_activity(tokens["access_token"])
     except Exception as e:
