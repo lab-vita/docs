@@ -386,7 +386,15 @@ async def install(request: Request):
     except Exception as e:
         logger.error(f"Ошибка регистрации: {e}")
 
-    return {"status": "ok", "message": "Приложение установлено"}
+    return HTMLResponse("""
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f5;}
+.card{background:#fff;border-radius:8px;padding:32px 40px;box-shadow:0 2px 8px rgba(0,0,0,.1);text-align:center;}
+h2{color:#1a1a1a;margin-bottom:8px;} p{color:#666;font-size:14px;}
+</style></head><body>
+<div class="card"><h2>✅ Приложение установлено</h2>
+<p>Откройте «Выдача наличных» в левом меню Битрикс24.</p></div>
+</body></html>""")
 
 
 @app.api_route("/app", methods=["GET", "POST"], response_class=HTMLResponse)
