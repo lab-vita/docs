@@ -152,7 +152,13 @@ def replace_paragraph_text(paragraph, data: dict):
     for key, value in data.items():
         placeholder = f"${{{key}}}"
         if placeholder in full_text:
-            full_text = full_text.replace(placeholder, str(value))
+            str_value = str(value)
+            # Если значение начинается с \n (список позиций),
+            # убираем точку стоящую сразу после плейсхолдера чтобы не было "на ."
+            if str_value.startswith("\n") and f"{placeholder}." in full_text:
+                full_text = full_text.replace(f"{placeholder}.", str_value)
+            else:
+                full_text = full_text.replace(placeholder, str_value)
 
     # Ничего не изменилось — выходим
     if full_text == original_text:
@@ -575,7 +581,7 @@ async def activity_handler(request: Request):
                     formatted.append(f"{i}. {name} — {int(float(amount)):,} руб.".replace(",", " "))
                 else:
                     formatted.append(f"{i}. {name}")
-            doc_data["REQUEST_GOAL"] = "\n".join(formatted)
+            doc_data["REQUEST_GOAL"] = "\n" + "\n".join(formatted)
 
     file_id = generate_document(template_id, folder_id, filename, doc_data, signatures)
 
@@ -656,7 +662,7 @@ async def submit(req: SubmitRequest):
             lines = []
             for i, p in enumerate(req.positions, 1):
                 lines.append(f"{i}. {p.name} — {int(p.amount):,} руб.".replace(",", " "))
-            request_goal = "\n".join(lines)
+            request_goal = "\n" + "\n".join(lines)
 
         # Создаём элемент процесса
         fields = {
