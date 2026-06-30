@@ -137,6 +137,71 @@ def b24_upload_file(folder_id: str, filename: str, content: bytes) -> str:
 
 # === Обработка документа ===
 
+def set_approver_row_visibility(doc: Document, visible: bool):
+    """
+    Скрывает или показывает строку таблицы с блоком руководителя (SIGN_APPROVER).
+    visible=False — красим текст в белый, картинку делаем прозрачной (1x1 пиксель).
+    visible=True  — возвращаем чёрный цвет текста, картинку заменит replace_image.
+    """
+    from lxml import etree
+
+    # 1x1 прозрачный PNG
+    TRANSPARENT_PNG = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+        b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    color = "FFFFFF" if not visible else "000000"
+
+    for table in doc.tables:
+        for row in table.rows:
+            # Ищем строку содержащую SIGN_APPROVER
+            row_xml = etree.tostring(row._element, encoding="unicode")
+            if "SIGN_APPROVER" not in row_xml:
+                continue
+
+            # Красим весь текст в строке
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        rpr = run._element.find(qn("w:rPr"))
+                        if rpr is None:
+                            rpr = etree.SubElement(run._element, qn("w:rPr"))
+                            run._element.insert(0, rpr)
+                        color_el = rpr.find(qn("w:color"))
+                        if color_el is None:
+                            color_el = etree.SubElement(rpr, qn("w:color"))
+                        color_el.set(qn("w:val"), color)
+
+            # Скрываем/показываем картинку SIGN_APPROVER
+            for drawing in row._element.findall(".//" + qn("wp:anchor")):
+                docPr = drawing.find(".//" + qn("wp:docPr"))
+                if docPr is None or docPr.get("descr") != "SIGN_APPROVER":
+                    continue
+                blip = drawing.find(".//" + qn("a:blip"))
+                if blip is None:
+                    continue
+                if not visible:
+                    # Заменяем на прозрачный PNG
+                    from docx.opc.part import Part
+                    from docx.opc.packuri import PackURI
+                    transp_part = Part(
+                        partname=PackURI("/word/media/sign_approver_hidden.png"),
+                        content_type="image/png",
+                        blob=TRANSPARENT_PNG,
+                        package=doc.part.package
+                    )
+                    new_rId = doc.part.relate_to(
+                        transp_part,
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+                    )
+                    blip.set(qn("r:embed"), new_rId)
+                    logger.info("SIGN_APPROVER скрыт (прозрачный PNG)")
+                # visible=True — картинку заменит replace_image после этой функции
+            return
+
+
 def replace_paragraph_text(paragraph, data: dict):
     """
     Заменяет переменные вида ${KEY} в одном параграфе.
@@ -288,14 +353,25 @@ def parse_signatures(signatures_list) -> list:
     return result
 
 
-def generate_document(template_id: str, folder_id: str, filename: str, data: dict, signatures: list) -> str:
+def generate_document(template_id: str, folder_id: str, filename: str, data: dict, signatures: list,
+                      source_file_id: str = "") -> str:
     """
     Генерирует документ из шаблона и загружает на Диск.
+    Если source_file_id передан — берёт существующий файл вместо шаблона
+    (используется для добавления подписи руководителя после согласования).
     Возвращает ID загруженного файла.
     """
-    template_bytes = b24_download_file(template_id)
-    doc = Document(io.BytesIO(template_bytes))
-    replace_text(doc, data)
+    file_id_to_use = source_file_id if source_file_id else template_id
+    file_bytes = b24_download_file(file_id_to_use)
+    doc = Document(io.BytesIO(file_bytes))
+
+    if not source_file_id:
+        # Первая генерация — подставляем переменные и скрываем блок руководителя
+        replace_text(doc, data)
+        set_approver_row_visibility(doc, visible=False)
+    else:
+        # После согласования — показываем блок руководителя
+        set_approver_row_visibility(doc, visible=True)
 
     for sig in signatures:
         sign_bytes = b24_download_file(sig["signature_id"])
@@ -367,6 +443,13 @@ def register_activity(access_token: str):
                 "Type": "string",
                 "Required": "N",
                 "Multiple": "Y",
+            },
+            "source_file_id": {
+                "Name": {"ru": "ID существующего файла (для добавления подписи)",
+                         "en": "Source file ID (for adding signature)"},
+                "Type": "string",
+                "Required": "N",
+                "Multiple": "N",
             },
         },
         "RETURN_PROPERTIES": {
@@ -548,6 +631,7 @@ async def activity_handler(request: Request):
     template_id = props.get("template_id", "")
     folder_id = props.get("folder_id", "")
     filename = props.get("filename", "document.docx")
+    source_file_id = props.get("source_file_id", "")
     doc_data = parse_variables(props.get("variables", []))
     signatures = parse_signatures(props.get("signatures", []))
 
@@ -583,7 +667,7 @@ async def activity_handler(request: Request):
                     formatted.append(f"{i}. {name}")
             doc_data["REQUEST_GOAL"] = "\n" + "\n".join(formatted)
 
-    file_id = generate_document(template_id, folder_id, filename, doc_data, signatures)
+    file_id = generate_document(template_id, folder_id, filename, doc_data, signatures, source_file_id=source_file_id)
 
     # Возвращаем результат в БП
     client_endpoint = get_client_endpoint()
