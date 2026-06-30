@@ -382,9 +382,13 @@ async def install(request: Request):
     save_tokens(tokens)
 
     placement = params.get("PLACEMENT", "DEFAULT")
+    placement_options = params.get("PLACEMENT_OPTIONS", "")
 
-    # При открытии через LEFT_MENU — показываем форму
-    if placement != "DEFAULT":
+    # Страница настроек разработчика — URI содержит /devops/edit/application/
+    is_devops_page = "devops" in placement_options and "edit" in placement_options
+
+    # При открытии через LEFT_MENU или мобильное приложение — показываем форму
+    if placement != "DEFAULT" or not is_devops_page:
         logger.info(f"Открытие через placement={placement}, показываем форму")
         auth_id = params.get("AUTH_ID", "")
         user_id = ""
@@ -407,7 +411,7 @@ async def install(request: Request):
                             f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
         return HTMLResponse(html)
 
-    # DEFAULT — страница настроек, регистрируем активити и показываем экран установки
+    # Страница настроек разработчика — регистрируем активити и показываем экран установки
     try:
         register_activity(tokens["access_token"])
     except Exception as e:
