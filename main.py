@@ -384,10 +384,41 @@ async def install(request: Request):
     return {"status": "ok", "message": "Приложение установлено"}
 
 
-@app.post("/app")
+@app.api_route("/app", methods=["GET", "POST"], response_class=HTMLResponse)
 async def app_handler(request: Request):
-    """Обработчик событий приложения от Битрикс24"""
-    return {"status": "ok"}
+    """
+    Обработчик приложения от Битрикс24 — отображает форму выдачи наличных.
+    Вызывается когда сотрудник открывает приложение.
+    """
+    query = dict(request.query_params)
+    try:
+        form_data = dict(await request.form())
+    except Exception:
+        form_data = {}
+
+    user_id = ""
+    auth_id = form_data.get("AUTH_ID", "")
+    domain = query.get("DOMAIN", "") or form_data.get("DOMAIN", "")
+    if auth_id and domain:
+        try:
+            profile_resp = requests.post(
+                f"https://{domain}/rest/profile.json",
+                params={"auth": auth_id}
+            )
+            profile = profile_resp.json().get("result", {})
+            user_id = str(profile.get("ID", ""))
+            logger.info(f"User ID из профиля: {user_id}")
+        except Exception as e:
+            logger.error(f"Ошибка получения профиля: {e}")
+
+    with open("/app/form.html", "r", encoding="utf-8") as f:
+        html = f.read()
+
+    html = html.replace("const userId = urlParams.get('user_id') || '';",
+                        f"const userId = urlParams.get('user_id') || '{user_id}';")
+    html = html.replace("const authToken = urlParams.get('auth_token') || '';",
+                        f"const authToken = urlParams.get('auth_token') || '{auth_id}';")
+    return html
 
 
 @app.post("/activity-handler")
