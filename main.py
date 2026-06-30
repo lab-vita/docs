@@ -141,7 +141,12 @@ def replace_paragraph_text(paragraph, data: dict):
     """
     Заменяет переменные вида ${KEY} в одном параграфе.
     Собирает полный текст из всех run-ов чтобы обойти разбивку Word.
+    Если значение содержит \n — разбивает параграф на несколько.
+    Возвращает список новых параграфов если было разбиение, иначе None.
     """
+    import copy
+    from lxml import etree
+
     for key, value in data.items():
         placeholder = f"${{{key}}}"
         if placeholder not in paragraph.text:
@@ -149,21 +154,59 @@ def replace_paragraph_text(paragraph, data: dict):
         full_text = "".join(run.text for run in paragraph.runs)
         if placeholder not in full_text:
             continue
+
         new_text = full_text.replace(placeholder, str(value))
+
+        # Если нет переносов строк — простая замена
+        if "\n" not in new_text:
+            if paragraph.runs:
+                paragraph.runs[0].text = new_text
+                for run in paragraph.runs[1:]:
+                    run.text = ""
+            return
+
+        # Есть переносы — нужно разбить на несколько параграфов
+        lines = new_text.split("\n")
+        # Первую строку вставляем в текущий параграф
+        first_line = lines[0]
         if paragraph.runs:
-            paragraph.runs[0].text = new_text
+            paragraph.runs[0].text = first_line
             for run in paragraph.runs[1:]:
                 run.text = ""
+
+        # Остальные строки вставляем как новые параграфы после текущего
+        parent = paragraph._element.getparent()
+        insert_idx = list(parent).index(paragraph._element)
+        for i, line in enumerate(lines[1:], 1):
+            new_p = copy.deepcopy(paragraph._element)
+            # Очищаем все runs в копии и вставляем нужный текст
+            for r in new_p.findall('.//' + qn('w:r')):
+                t = r.find(qn('w:t'))
+                if t is not None:
+                    t.text = line if r == new_p.findall('.//' + qn('w:r'))[0] else ""
+                    if line and (line[0] == ' ' or line[-1] == ' '):
+                        t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+            # Удаляем лишние runs, оставляем только первый
+            runs_in_new_p = new_p.findall('.//' + qn('w:r'))
+            for r in runs_in_new_p[1:]:
+                r.getparent().remove(r)
+            if runs_in_new_p:
+                t = runs_in_new_p[0].find(qn('w:t'))
+                if t is not None:
+                    t.text = line
+                    if line and (line[0] == ' ' or line[-1] == ' '):
+                        t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+            parent.insert(insert_idx + i, new_p)
 
 
 def replace_text(doc: Document, data: dict):
     """Заменяет текстовые переменные во всём документе — в параграфах и таблицах"""
-    for paragraph in doc.paragraphs:
+    for paragraph in list(doc.paragraphs):
         replace_paragraph_text(paragraph, data)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                for paragraph in cell.paragraphs:
+                for paragraph in list(cell.paragraphs):
                     replace_paragraph_text(paragraph, data)
 
 
@@ -538,7 +581,7 @@ async def activity_handler(request: Request):
                     formatted.append(f"{i}. {name} — {int(float(amount)):,} руб.".replace(",", " "))
                 else:
                     formatted.append(f"{i}. {name}")
-            doc_data["REQUEST_GOAL"] = "\n" + "\n".join(formatted)
+            doc_data["REQUEST_GOAL"] = "\n".join(formatted)
 
     file_id = generate_document(template_id, folder_id, filename, doc_data, signatures)
 
@@ -616,7 +659,7 @@ async def submit(req: SubmitRequest):
             request_goal = req.positions[0].name
         else:
             # Несколько позиций — нумерованный список
-            lines = ["\n"]
+            lines = []
             for i, p in enumerate(req.positions, 1):
                 lines.append(f"{i}. {p.name} — {int(p.amount):,} руб.".replace(",", " "))
             request_goal = "\n".join(lines)
