@@ -217,7 +217,6 @@ def set_approver_row_visibility(doc: Document, visible: bool):
                 # visible=True — картинку заменит replace_image после этой функции
             return
 
-
 def replace_paragraph_text(paragraph, data: dict):
     """
     Заменяет переменные вида ${KEY} в одном параграфе.
@@ -369,8 +368,7 @@ def parse_signatures(signatures_list) -> list:
     return result
 
 
-def generate_document(template_id: str, folder_id: str, filename: str, data: dict, signatures: list,
-                      source_file_id: str = "") -> str:
+def generate_document(template_id: str, folder_id: str, filename: str, data: dict, signatures: list, source_file_id: str = "") -> str:
     """
     Генерирует документ из шаблона и загружает на Диск.
     Если source_file_id передан — берёт существующий файл вместо шаблона
@@ -452,7 +450,6 @@ def _bind_menu_to_all_users(access_token: str, client_endpoint: str):
 
     logger.info(f"Пункт меню добавлен {total_bound} пользователям")
 
-
 def register_activity(access_token: str):
     """Регистрирует кастомное активити в дизайнере БП и пункт в левом меню"""
     client_endpoint = get_client_endpoint()
@@ -506,8 +503,7 @@ def register_activity(access_token: str):
                 "Multiple": "Y",
             },
             "source_file_id": {
-                "Name": {"ru": "ID существующего файла (для добавления подписи)",
-                         "en": "Source file ID (for adding signature)"},
+                "Name": {"ru": "ID существующего файла (для добавления подписи)", "en": "Source file ID (for adding signature)"},
                 "Type": "string",
                 "Required": "N",
                 "Multiple": "N",
@@ -587,8 +583,8 @@ def render_menu(user_id: str, auth_id: str) -> str:
          for key, p in PROCESSES.items()},
         ensure_ascii=False
     )
-    html = html.replace("{{APP_TITLE}}", APP_TITLE)
-    html = html.replace("{{PROCESSES_JSON}}", processes_json)
+    html = html.replace("__APP_TITLE__", APP_TITLE)
+    html = html.replace("__PROCESSES_JSON__", processes_json)
     html = html.replace("const userId = urlParams.get('user_id') || '';",
                         f"const userId = urlParams.get('user_id') || '{user_id}';")
     html = html.replace("const authToken = urlParams.get('auth_token') || '';",
@@ -615,8 +611,8 @@ async def install(request: Request):
 
     domain = params.get("DOMAIN") or params.get("auth[domain]", "")
     client_endpoint = (
-            params.get("auth[client_endpoint]")
-            or (f"https://{domain}/rest/" if domain else None)
+        params.get("auth[client_endpoint]")
+        or (f"https://{domain}/rest/" if domain else None)
     )
     tokens = {
         "access_token": params.get("AUTH_ID") or params.get("auth[access_token]"),
