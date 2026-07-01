@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{APP_TITLE}}</title>
+    <title>__APP_TITLE__</title>
     <style>
         * {
             box-sizing: border-box;
@@ -108,7 +108,7 @@
 </head>
 <body>
 <div class="menu-wrap">
-    <h1>{{APP_TITLE}}</h1>
+    <h1>__APP_TITLE__</h1>
     <div class="subtitle">Выберите процесс для подачи заявки</div>
     <div id="processList"></div>
 </div>
@@ -117,12 +117,7 @@
     const urlParams = new URLSearchParams(window.location.search);
     const userId = urlParams.get('user_id') || '';
     const authToken = urlParams.get('auth_token') || '';
-    const processes = {
-    {
-        PROCESSES_JSON
-    }
-    }
-    ;
+    const processes = __PROCESSES_JSON__;
 
     function render() {
         const container = document.getElementById('processList');

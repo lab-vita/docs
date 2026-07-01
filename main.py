@@ -408,6 +408,51 @@ def generate_document(template_id: str, folder_id: str, filename: str, data: dic
 
 # === Регистрация активити в Битрикс24 ===
 
+def _bind_menu_to_all_users(access_token: str, client_endpoint: str):
+    """
+    Добавляет пункт левого меню каждому активному пользователю портала.
+    Битрикс24 не добавляет placement.bind автоматически для локальных приложений,
+    поэтому делаем это программно при установке/переустановке.
+    """
+    start = 0
+    limit = 50
+    total_bound = 0
+
+    while True:
+        resp = requests.post(f"{client_endpoint}user.get.json", json={
+            "auth": access_token,
+            "filter": {"ACTIVE": True},
+            "select": ["ID"],
+            "start": start,
+        })
+        data = resp.json()
+        users = data.get("result", [])
+        if not users:
+            break
+
+        for user in users:
+            user_id = user.get("ID")
+            if not user_id:
+                continue
+            bind_resp = requests.post(f"{client_endpoint}placement.bind.json", json={
+                "auth": access_token,
+                "PLACEMENT": "LEFT_MENU",
+                "HANDLER": f"{APP_URL}/app",
+                "TITLE": APP_TITLE,
+                "USER_ID": user_id,
+            })
+            result = bind_resp.json()
+            if result.get("result"):
+                total_bound += 1
+
+        total = data.get("total", 0)
+        start += limit
+        if start >= total:
+            break
+
+    logger.info(f"Пункт меню добавлен {total_bound} пользователям")
+
+
 def register_activity(access_token: str):
     """Регистрирует кастомное активити в дизайнере БП и пункт в левом меню"""
     client_endpoint = get_client_endpoint()
@@ -482,15 +527,15 @@ def register_activity(access_token: str):
     resp.raise_for_status()
     logger.info(f"Активити зарегистрировано: {resp.json().get('result')}")
 
-    # Отвязываем старый пункт меню (если был привязан с другим заголовком/хендлером)
-    unbind_resp = requests.post(f"{client_endpoint}placement.unbind.json", json={
-        "auth": access_token,
-        "PLACEMENT": "LEFT_MENU",
-        "HANDLER": f"{APP_URL}/form",
-    })
-    logger.info(f"Отвязка старого пункта меню: {unbind_resp.json()}")
+    # Отвязываем старые пункты меню (если были привязаны с другим заголовком/хендлером)
+    for old_handler in [f"{APP_URL}/form", f"{APP_URL}/app"]:
+        requests.post(f"{client_endpoint}placement.unbind.json", json={
+            "auth": access_token,
+            "PLACEMENT": "LEFT_MENU",
+            "HANDLER": old_handler,
+        })
 
-    # Регистрируем пункт в левом меню
+    # Регистрируем пункт в левом меню глобально
     placement_resp = requests.post(f"{client_endpoint}placement.bind.json", json={
         "auth": access_token,
         "PLACEMENT": "LEFT_MENU",
@@ -498,6 +543,9 @@ def register_activity(access_token: str):
         "TITLE": APP_TITLE,
     })
     logger.info(f"Регистрация в левом меню: {placement_resp.json()}")
+
+    # Добавляем пункт меню каждому активному пользователю
+    _bind_menu_to_all_users(access_token, client_endpoint)
 
 
 async def resolve_user_id(query: dict, form_data: dict) -> tuple[str, str]:
