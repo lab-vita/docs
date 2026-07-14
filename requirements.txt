@@ -1,6 +1,11 @@
-fastapi
-uvicorn
-python-docx
-requests
-pillow
-python-multipart
+﻿fastapi==0.115.6
+uvicorn==0.32.1
+python-docx==1.1.2
+httpx==0.28.1
+pillow==11.1.0
+python-multipart==0.0.20
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+pydantic-settings==2.7.0
+lxml==5.3.0

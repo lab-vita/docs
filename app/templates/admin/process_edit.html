@@ -1,0 +1,319 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>__TITLE__ — редактирование</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            font-size: 14px; color: #333; background: #f0f2f5; min-height: 100vh;
+        }
+        .topbar {
+            background: #fff; border-bottom: 1px solid #e8e8e8;
+            padding: 14px 24px; display: flex; align-items: center; gap: 12px;
+        }
+        .back-link {
+            color: #aaa; text-decoration: none; font-size: 18px; line-height: 1;
+        }
+        .back-link:hover { color: #555; }
+        .topbar h1 { font-size: 17px; font-weight: 600; color: #1a1a1a; }
+        .content { padding: 24px; max-width: 760px; margin: 0 auto; }
+        .section {
+            background: #fff; border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08);
+            padding: 20px 24px; margin-bottom: 16px;
+        }
+        .section-title {
+            font-size: 13px; font-weight: 600; color: #888;
+            text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px;
+        }
+        .field { margin-bottom: 14px; }
+        .field:last-child { margin-bottom: 0; }
+        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        label { display: block; font-size: 13px; color: #555; margin-bottom: 5px; font-weight: 500; }
+        .hint { font-size: 11px; color: #aaa; margin-top: 3px; }
+        input[type="text"], input[type="number"], textarea, select {
+            width: 100%; border: 1px solid #d9d9d9; border-radius: 6px;
+            padding: 8px 12px; font-size: 14px; color: #333;
+            outline: none; transition: border-color .2s; font-family: monospace;
+        }
+        input[type="text"].natural, textarea.natural { font-family: inherit; }
+        input:focus, textarea:focus, select:focus { border-color: #2fc6f6; }
+        textarea { resize: vertical; min-height: 70px; }
+        .toggle-row {
+            display: flex; align-items: center; gap: 10px;
+        }
+        .toggle {
+            position: relative; width: 40px; height: 22px; flex-shrink: 0;
+        }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; inset: 0; background: #ccc;
+            border-radius: 22px; cursor: pointer; transition: .2s;
+        }
+        .slider:before {
+            content: ""; position: absolute; width: 16px; height: 16px;
+            left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s;
+        }
+        input:checked + .slider { background: #2fc6f6; }
+        input:checked + .slider:before { transform: translateX(18px); }
+        /* Fields list */
+        .fields-list { margin-bottom: 10px; }
+        .field-item {
+            border: 1px solid #e8e8e8; border-radius: 6px;
+            padding: 12px 14px; margin-bottom: 8px; background: #fafafa;
+        }
+        .field-item-row {
+            display: grid; grid-template-columns: 1fr 1fr 120px 80px auto; gap: 8px;
+            align-items: center;
+        }
+        .field-item input, .field-item select {
+            padding: 6px 10px; font-size: 13px;
+        }
+        .btn-remove-field {
+            background: none; border: none; color: #ccc; font-size: 18px;
+            cursor: pointer; padding: 2px 6px; line-height: 1; transition: color .15s;
+        }
+        .btn-remove-field:hover { color: #e53935; }
+        .btn-add-field {
+            background: none; border: 1px dashed #2fc6f6; color: #2fc6f6;
+            border-radius: 6px; padding: 7px 14px; font-size: 13px;
+            cursor: pointer; width: 100%; transition: background .15s;
+        }
+        .btn-add-field:hover { background: #f0fbff; }
+        /* Signatures */
+        .sig-item {
+            border: 1px solid #e8e8e8; border-radius: 6px;
+            padding: 12px 14px; margin-bottom: 8px; background: #fafafa;
+        }
+        .sig-item-row {
+            display: grid; grid-template-columns: 1fr 1fr 120px 120px auto; gap: 8px;
+            align-items: center;
+        }
+        .sig-item input, .sig-item select { padding: 6px 10px; font-size: 13px; }
+        /* Actions */
+        .actions { display: flex; gap: 10px; margin-top: 8px; }
+        .btn {
+            padding: 9px 20px; border-radius: 6px; font-size: 14px;
+            font-weight: 500; cursor: pointer; border: none; transition: background .15s;
+        }
+        .btn-primary { background: #2fc6f6; color: #fff; }
+        .btn-primary:hover { background: #1ab3e8; }
+        .btn-ghost { background: #f0f0f0; color: #333; text-decoration: none; }
+        .btn-ghost:hover { background: #e0e0e0; }
+        .col-label { font-size: 11px; color: #aaa; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+<div class="topbar">
+    <a class="back-link" href="/admin">‹</a>
+    <h1 id="pageTitle">__TITLE__</h1>
+</div>
+
+<form method="POST" action="__FORM_ACTION__" id="mainForm">
+<div class="content">
+
+    <!-- Основное -->
+    <div class="section">
+        <div class="section-title">Основное</div>
+        <div class="field-row">
+            <div class="field">
+                <label>Название *</label>
+                <input type="text" name="title" id="fTitle" class="natural" required>
+            </div>
+            <div class="field">
+                <label>Ключ (латиница) *</label>
+                <input type="text" name="key" id="fKey" placeholder="cash" required>
+                <div class="hint">Уникальный идентификатор, используется в URL</div>
+            </div>
+        </div>
+        <div class="field-row">
+            <div class="field">
+                <label>Иконка (emoji)</label>
+                <input type="text" name="icon" id="fIcon" class="natural" placeholder="💵">
+            </div>
+            <div class="field">
+                <label>Порядок сортировки</label>
+                <input type="number" name="sort_order" id="fSortOrder" value="0" min="0">
+            </div>
+        </div>
+        <div class="field">
+            <label>Описание</label>
+            <input type="text" name="description" id="fDescription" class="natural"
+                placeholder="Краткое описание процесса">
+        </div>
+        <div class="field">
+            <div class="toggle-row">
+                <label class="toggle">
+                    <input type="checkbox" name="is_active" id="fIsActive">
+                    <span class="slider"></span>
+                </label>
+                <span>Процесс активен (виден пользователям)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bitrix24 -->
+    <div class="section">
+        <div class="section-title">Настройки Bitrix24</div>
+        <div class="field-row">
+            <div class="field">
+                <label>ID инфоблока</label>
+                <input type="text" name="iblock_id" id="fIblockId" placeholder="94">
+                <div class="hint">ID списка/процесса в Bitrix24</div>
+            </div>
+            <div class="field">
+                <label>ID шаблона БП</label>
+                <input type="text" name="bp_template_id" id="fBpTemplateId" placeholder="592">
+                <div class="hint">ID шаблона бизнес-процесса</div>
+            </div>
+        </div>
+        <div class="field-row">
+            <div class="field">
+                <label>ID шаблона документа (Диск)</label>
+                <input type="text" name="template_file_id" id="fTemplateFileId" placeholder="12345">
+                <div class="hint">ID .docx файла на Диске Bitrix24</div>
+            </div>
+            <div class="field">
+                <label>ID папки для сохранения</label>
+                <input type="text" name="output_folder_id" id="fOutputFolderId" placeholder="67890">
+                <div class="hint">Папка на Диске для готовых документов</div>
+            </div>
+        </div>
+        <div class="field">
+            <label>Маппинг полей инфоблока (JSON)</label>
+            <textarea name="iblock_fields" id="fIblockFields" style="font-family:monospace"
+                placeholder='{"SUMMA": "PROPERTY_516", "NAZNACHENIE": "PROPERTY_518"}'></textarea>
+            <div class="hint">Ключ — имя переменной формы, значение — код поля в инфоблоке</div>
+        </div>
+    </div>
+
+    <!-- Поля формы -->
+    <div class="section">
+        <div class="section-title">Поля формы</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 80px auto;gap:8px;margin-bottom:6px;">
+            <div class="col-label">Имя переменной</div>
+            <div class="col-label">Подпись</div>
+            <div class="col-label">Тип</div>
+            <div class="col-label">Обязат.</div>
+            <div></div>
+        </div>
+        <div class="fields-list" id="fieldsList"></div>
+        <button type="button" class="btn-add-field" onclick="addField()">+ Добавить поле</button>
+    </div>
+
+    <!-- Подписи -->
+    <div class="section">
+        <div class="section-title">Подписи в документе</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:8px;margin-bottom:6px;">
+            <div class="col-label">Placeholder (Alt Text)</div>
+            <div class="col-label">Подпись</div>
+            <div class="col-label">Этап</div>
+            <div class="col-label">Источник</div>
+            <div></div>
+        </div>
+        <div class="fields-list" id="sigsList"></div>
+        <button type="button" class="btn-add-field" onclick="addSig()">+ Добавить подпись</button>
+    </div>
+
+    <div class="actions">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <a href="/admin" class="btn btn-ghost">Отмена</a>
+    </div>
+</div>
+</form>
+
+<script>
+    const process = __PROCESS_JSON__;
+    let fieldIdx = 0;
+    let sigIdx = 0;
+
+    const FIELD_TYPES = ['text','number','date','date_range','select','textarea','positions'];
+
+    // ── Поля формы ────────────────────────────────────────────────────────────
+
+    function addField(f) {
+        const idx = fieldIdx++;
+        const div = document.createElement('div');
+        div.className = 'field-item';
+        div.innerHTML = `<div class="field-item-row">
+            <input type="text" name="fields[${idx}][name]"
+                value="${f?.name||''}" placeholder="FIELD_NAME">
+            <input type="text" name="fields[${idx}][label]" class="natural"
+                value="${f?.label||''}" placeholder="Название поля">
+            <select name="fields[${idx}][field_type]">
+                ${FIELD_TYPES.map(t =>
+                    `<option value="${t}" ${(f?.field_type||'text')===t?'selected':''}>${t}</option>`
+                ).join('')}
+            </select>
+            <label style="justify-content:center;display:flex;align-items:center;gap:4px;margin:0">
+                <input type="checkbox" name="fields[${idx}][required]"
+                    ${f?.required!==false?'checked':''}> Обяз.
+            </label>
+            <button type="button" class="btn-remove-field" onclick="this.closest('.field-item').remove()">×</button>
+        </div>
+        <div style="margin-top:6px">
+            <input type="text" name="fields[${idx}][placeholder]" class="natural"
+                value="${f?.placeholder||''}" placeholder="Placeholder (необязательно)"
+                style="font-size:12px">
+        </div>`;
+        document.getElementById('fieldsList').appendChild(div);
+    }
+
+    // ── Подписи ───────────────────────────────────────────────────────────────
+
+    function addSig(s) {
+        const idx = sigIdx++;
+        const div = document.createElement('div');
+        div.className = 'sig-item';
+        div.innerHTML = `<div class="sig-item-row">
+            <input type="text" name="signatures[${idx}][placeholder]"
+                value="${s?.placeholder||''}" placeholder="SIGN_EMPLOYEE">
+            <input type="text" name="signatures[${idx}][label]" class="natural"
+                value="${s?.label||''}" placeholder="Подпись сотрудника">
+            <select name="signatures[${idx}][stage]">
+                <option value="initial" ${(s?.stage||'initial')==='initial'?'selected':''}>initial</option>
+                <option value="approval" ${s?.stage==='approval'?'selected':''}>approval</option>
+            </select>
+            <select name="signatures[${idx}][source]">
+                <option value="employee_profile" ${(s?.source||'employee_profile')==='employee_profile'?'selected':''}>
+                    Профиль сотрудника</option>
+                <option value="bp_variable" ${s?.source==='bp_variable'?'selected':''}>
+                    Переменная БП</option>
+            </select>
+            <button type="button" class="btn-remove-field" onclick="this.closest('.sig-item').remove()">×</button>
+        </div>`;
+        document.getElementById('sigsList').appendChild(div);
+    }
+
+    // ── Инициализация ─────────────────────────────────────────────────────────
+
+    if (process) {
+        document.getElementById('fTitle').value = process.title || '';
+        document.getElementById('fKey').value = process.key || '';
+        document.getElementById('fIcon').value = process.icon || '';
+        document.getElementById('fDescription').value = process.description || '';
+        document.getElementById('fSortOrder').value = process.sort_order ?? 0;
+        document.getElementById('fIsActive').checked = process.is_active !== false;
+        document.getElementById('fIblockId').value = process.iblock_id || '';
+        document.getElementById('fBpTemplateId').value = process.bp_template_id || '';
+        document.getElementById('fTemplateFileId').value = process.template_file_id || '';
+        document.getElementById('fOutputFolderId').value = process.output_folder_id || '';
+        document.getElementById('fIblockFields').value =
+            JSON.stringify(process.iblock_fields || {}, null, 2);
+
+        (process.fields || []).forEach(f => addField(f));
+        (process.signatures || []).forEach(s => addSig(s));
+    } else {
+        document.getElementById('fIsActive').checked = true;
+        // Дефолтные подписи для нового процесса
+        addSig({placeholder: 'SIGN_EMPLOYEE', label: 'Подпись сотрудника',
+                stage: 'initial', source: 'employee_profile'});
+        addSig({placeholder: 'SIGN_APPROVER', label: 'Подпись руководителя',
+                stage: 'approval', source: 'bp_variable'});
+    }
+</script>
+</body>
+</html>

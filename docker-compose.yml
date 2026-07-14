@@ -1,18 +1,40 @@
-version: "3.9"
+﻿version: "3.9"
 
 services:
-  bitrix24-business-process-document-generator:
+  app:
     build: .
-    container_name: bitrix24-business-process-document-generator
+    container_name: labvita-docs
     restart: always
     ports:
       - "5001:5000"
-    env_file:
-      - .env
+    env_file: .env
     volumes:
       - ./tokens.json:/app/tokens.json
+    depends_on:
+      postgres:
+        condition: service_healthy
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: labvita-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: labvita
+      POSTGRES_USER: labvita
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labvita"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+
