@@ -32,7 +32,7 @@ class BitrixClient:
     def __init__(self):
         self._client = httpx.AsyncClient(timeout=30.0)
 
-        async def aclose(self):
+    async def aclose(self):
         await self._client.aclose()
 
     async def __aenter__(self):
