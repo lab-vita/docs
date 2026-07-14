@@ -1,4 +1,4 @@
-﻿"""
+"""
 /api/process/{key} — отдаёт конфиг процесса в JSON для построения формы.
 """
 from fastapi import APIRouter, HTTPException

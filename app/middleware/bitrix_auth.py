@@ -1,4 +1,4 @@
-﻿"""
+"""
 Middleware безопасности для Bitrix24-приложения.
 
 BitrixSourceMiddleware  — гарантирует что запрос пришёл из Bitrix24 iframe.
