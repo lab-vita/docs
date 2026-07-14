@@ -117,5 +117,6 @@ async def app_handler(request: Request):
     html = (_TEMPLATES_DIR / "menu.html").read_text(encoding="utf-8")
     html = html.replace("__APP_TITLE__", settings.app_title)
     html = html.replace("__PROCESSES_JSON__", processes_json)
+    html = html.replace("__ADMIN_USER_IDS__", json.dumps(settings.admin_user_ids))
     html = _inject_user(html, user_id, auth_id)
     return HTMLResponse(html)

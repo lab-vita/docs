@@ -33,6 +33,13 @@
         .process-desc { font-size: 13px; color: #888; line-height: 1.4; }
         .process-arrow { color: #ccc; font-size: 18px; flex-shrink: 0; }
         .empty-state { text-align: center; color: #999; padding: 40px 20px; font-size: 13px; }
+        .admin-link {
+            display: block; margin-top: 24px; padding: 10px 16px;
+            background: none; border: 1px solid #e0e0e0; border-radius: 8px;
+            color: #aaa; font-size: 12px; text-decoration: none;
+            text-align: center; transition: border-color .2s, color .2s;
+        }
+        .admin-link:hover { border-color: #2fc6f6; color: #2fc6f6; }
     </style>
 </head>
 <body>
@@ -40,12 +47,14 @@
     <h1>__APP_TITLE__</h1>
     <div class="subtitle">Выберите процесс для подачи заявки</div>
     <div id="processList"></div>
+    <div id="adminBlock"></div>
 </div>
 <script>
     const urlParams = new URLSearchParams(window.location.search);
     const userId = urlParams.get('user_id') || '';
     const authToken = urlParams.get('auth_token') || '';
     const processes = __PROCESSES_JSON__;
+    const adminIds = __ADMIN_USER_IDS__;
 
     (function render() {
         const container = document.getElementById('processList');
@@ -66,6 +75,13 @@
                 <div class="process-arrow">›</div>
             </a>`;
         }).join('');
+    })();
+
+    (function renderAdmin() {
+        if (!userId || !adminIds.includes(parseInt(userId))) return;
+        const adminUrl = `/admin?AUTH_ID=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
+        document.getElementById('adminBlock').innerHTML =
+            `<a class="admin-link" href="${adminUrl}">Администрирование</a>`;
     })();
 </script>
 </body>
