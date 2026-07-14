@@ -1,6 +1,4 @@
-﻿version: "3.9"
-
-services:
+﻿services:
   app:
     build: .
     container_name: labvita-docs
@@ -37,4 +35,5 @@ services:
 
 volumes:
   postgres_data:
+
 

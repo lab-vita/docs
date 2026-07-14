@@ -12,7 +12,7 @@ COPY migrations/ ./migrations/
 COPY alembic.ini .
 COPY entrypoint.sh .
 
-RUN chmod +x entrypoint.sh
+RUN sed -i 's/\r//' entrypoint.sh && chmod +x entrypoint.sh
 
 # Создаём файл токенов если не существует
 RUN touch /app/tokens.json
@@ -20,3 +20,4 @@ RUN touch /app/tokens.json
 EXPOSE 5000
 
 ENTRYPOINT ["./entrypoint.sh"]
+
