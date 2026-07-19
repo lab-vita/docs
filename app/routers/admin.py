@@ -28,6 +28,19 @@ def _render(template: str, **ctx) -> str:
     return html
 
 
+def _get_auth_id(request: Request) -> str:
+    """Извлекает AUTH_ID из query params или form_data."""
+    auth_id = (
+        request.query_params.get("AUTH_ID")
+        or request.query_params.get("auth_id")
+        or ""
+    )
+    if not auth_id:
+        form_data = getattr(request.state, "form_data", None) or {}
+        auth_id = form_data.get("AUTH_ID") or form_data.get("auth_id") or ""
+    return auth_id
+
+
 # ── Список процессов ──────────────────────────────────────────────────────────
 
 @router.get("", response_class=HTMLResponse)
@@ -54,8 +67,10 @@ async def admin_index(request: Request):
         ],
         ensure_ascii=False,
     )
+    auth_id = _get_auth_id(request)
     html = (_TEMPLATES_DIR / "index.html").read_text(encoding="utf-8")
     html = html.replace("__PROCESSES_JSON__", processes_json)
+    html = html.replace("__AUTH_ID__", auth_id)
     return HTMLResponse(html)
 
 
@@ -63,15 +78,18 @@ async def admin_index(request: Request):
 
 @router.get("/process/new", response_class=HTMLResponse)
 async def admin_process_new_form(request: Request):
+    auth_id = _get_auth_id(request)
     html = (_TEMPLATES_DIR / "process_edit.html").read_text(encoding="utf-8")
     html = html.replace("__PROCESS_JSON__", "null")
     html = html.replace("__TITLE__", "Новый процесс")
-    html = html.replace("__FORM_ACTION__", "/admin/process/new")
+    html = html.replace("__FORM_ACTION__", f"/admin/process/new?AUTH_ID={auth_id}")
+    html = html.replace("__AUTH_ID__", auth_id)
     return HTMLResponse(html)
 
 
 @router.post("/process/new")
 async def admin_process_new_save(request: Request):
+    auth_id = _get_auth_id(request)
     form_data = getattr(request.state, "form_data", None)
     if form_data is None:
         try:
@@ -101,7 +119,7 @@ async def admin_process_new_save(request: Request):
         await db.commit()
         await db.refresh(process)
 
-    return RedirectResponse(f"/admin/process/{process.id}", status_code=303)
+    return RedirectResponse(f"/admin/process/{process.id}?AUTH_ID={auth_id}", status_code=303)
 
 
 # ── Редактирование процесса ───────────────────────────────────────────────────
@@ -118,6 +136,8 @@ async def admin_process_edit_form(process_id: int, request: Request):
 
     if not process:
         return HTMLResponse("<p>Процесс не найден</p>", status_code=404)
+
+    auth_id = _get_auth_id(request)
 
     process_json = json.dumps(
         {
@@ -163,12 +183,14 @@ async def admin_process_edit_form(process_id: int, request: Request):
     html = (_TEMPLATES_DIR / "process_edit.html").read_text(encoding="utf-8")
     html = html.replace("__PROCESS_JSON__", process_json)
     html = html.replace("__TITLE__", process.title)
-    html = html.replace("__FORM_ACTION__", f"/admin/process/{process_id}")
+    html = html.replace("__FORM_ACTION__", f"/admin/process/{process_id}?AUTH_ID={auth_id}")
+    html = html.replace("__AUTH_ID__", auth_id)
     return HTMLResponse(html)
 
 
 @router.post("/process/{process_id}")
 async def admin_process_edit_save(process_id: int, request: Request):
+    auth_id = _get_auth_id(request)
     form_data = getattr(request.state, "form_data", None)
     if form_data is None:
         try:
@@ -212,7 +234,7 @@ async def admin_process_edit_save(process_id: int, request: Request):
 
         await db.commit()
 
-    return RedirectResponse(f"/admin/process/{process_id}", status_code=303)
+    return RedirectResponse(f"/admin/process/{process_id}?AUTH_ID={auth_id}", status_code=303)
 
 
 # ── Вкл/Выкл процесса ─────────────────────────────────────────────────────────
