@@ -128,8 +128,11 @@ class BitrixClient:
         Возвращает профиль текущего пользователя по его AUTH_ID.
         Включает пользовательские поля (UF_*).
         """
+        endpoint = self.get_client_endpoint()
+        if not endpoint:
+            raise RuntimeError("client_endpoint не найден — переустановите приложение")
         resp = await self._client.post(
-            f"https://{_load_tokens().get('domain', '')}/rest/profile.json",
+            f"{endpoint}profile.json",
             params={"auth": auth_id},
         )
         resp.raise_for_status()
