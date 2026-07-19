@@ -352,7 +352,10 @@ class BitrixClient:
                         "USER_ID": uid,
                     },
                 )
-                if bind_resp.json().get("result"):
+                resp_data = bind_resp.json()
+                if bind_resp.status_code != 200 or not resp_data.get("result"):
+                    logger.warning(f"placement.bind USER_ID={uid}: {bind_resp.status_code} {resp_data}")
+                else:
                     total_bound += 1
             total = data.get("total", 0)
             start += 50
