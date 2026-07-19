@@ -78,7 +78,7 @@ async def install(request: Request):
     try:
         async with BitrixClient() as bitrix:
             await bitrix.register_activity()
-            await bitrix.bind_menu_to_all_users()
+            await bitrix.bind_menu()
         logger.info("Регистрация завершена успешно")
     except Exception as e:
         logger.error(f"Ошибка регистрации: {e}")

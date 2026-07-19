@@ -301,8 +301,14 @@ class BitrixClient:
         resp.raise_for_status()
         logger.info(f"Активити зарегистрировано: {resp.json().get('result')}")
 
-    async def bind_menu_to_all_users(self) -> int:
-        """Добавляет пункт левого меню всем активным пользователям портала."""
+    async def bind_menu(self) -> None:
+        """
+        Регистрирует пункт левого меню глобально.
+        Примечание: Bitrix24 Cloud не поддерживает принудительную привязку
+        к конкретным пользователям (ERROR_PLACEMENT_USER_MODE) для локальных приложений.
+        Администратор портала должен добавить приложение в меню вручную через
+        настройки Bitrix24 или пользователи добавят его самостоятельно.
+        """
         endpoint = self.get_client_endpoint()
         token = await self._app_token()
 
@@ -315,7 +321,7 @@ class BitrixClient:
             )
 
         # Глобальная привязка
-        await self._client.post(
+        resp = await self._client.post(
             f"{endpoint}placement.bind.json",
             params={"auth": token},
             json={
@@ -324,44 +330,5 @@ class BitrixClient:
                 "TITLE": settings.app_title,
             },
         )
-
-        # Привязка по каждому пользователю
-        start = 0
-        total_bound = 0
-        while True:
-            resp = await self._client.post(
-                f"{endpoint}user.get.json",
-                params={"auth": token},
-                json={"filter": {"ACTIVE": True}, "select": ["ID"], "start": start},
-            )
-            data = resp.json()
-            users = data.get("result", [])
-            if not users:
-                break
-            for user in users:
-                uid = user.get("ID")
-                if not uid:
-                    continue
-                bind_resp = await self._client.post(
-                    f"{endpoint}placement.bind.json",
-                    params={"auth": token},
-                    json={
-                        "PLACEMENT": "LEFT_MENU",
-                        "HANDLER": f"{settings.app_url}/app",
-                        "TITLE": settings.app_title,
-                        "USER_ID": uid,
-                    },
-                )
-                resp_data = bind_resp.json()
-                if bind_resp.status_code != 200 or not resp_data.get("result"):
-                    logger.warning(f"placement.bind USER_ID={uid}: {bind_resp.status_code} {resp_data}")
-                else:
-                    total_bound += 1
-            total = data.get("total", 0)
-            start += 50
-            if start >= total:
-                break
-
-        logger.info(f"Пункт меню добавлен {total_bound} пользователям")
-        return total_bound
+        logger.info(f"Глобальная привязка меню: {resp.json()}")
 
