@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 # Маршруты, которые не требуют проверки источника
 _PUBLIC_PATHS = {"/health", "/install"}
+# Префиксы публичных маршрутов — API-эндпоинты вызываются JS внутри iframe
+_PUBLIC_PREFIXES = ("/api/",)
 
 _BLOCKED_HTML = """<!DOCTYPE html>
 <html lang="ru"><head><meta charset="UTF-8">
@@ -94,7 +96,7 @@ class BitrixSourceMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Публичные маршруты пропускаем
-        if path in _PUBLIC_PATHS:
+        if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES):
             return await call_next(request)
 
         # Для /admin проверка выполняется в AdminAccessMiddleware
